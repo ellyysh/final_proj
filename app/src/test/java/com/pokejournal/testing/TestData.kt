@@ -53,7 +53,7 @@ class FakeTime(var current: Long = 1_000_000L) : TimeProvider {
     }
 }
 
-/** Подменяет Dispatchers.Main тестовым диспетчером (viewModelScope работает на нём). */
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainDispatcherRule(
     val dispatcher: TestDispatcher = StandardTestDispatcher(),

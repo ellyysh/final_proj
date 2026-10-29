@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/** Реактивно перепланирует фоновую синхронизацию при изменении настроек. */
 class SyncInitializer @Inject constructor(
     @ApplicationScope private val scope: CoroutineScope,
     private val settingsRepository: SettingsRepository,

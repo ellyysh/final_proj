@@ -8,10 +8,7 @@ import com.pokejournal.domain.model.PokemonUserState
 import com.pokejournal.domain.model.SortOrder
 import com.pokejournal.domain.model.StatusFilter
 
-/**
- * Чистая бизнес-логика списка: объединяет каталог из API-кэша с личными данными
- * профиля и применяет поиск, фильтры, скрытие, закрепление и сортировку.
- */
+
 object PokemonListBuilder {
 
     fun build(
@@ -43,7 +40,6 @@ object PokemonListBuilder {
     }
 
     private fun matchesStatus(state: PokemonUserState, filter: StatusFilter): Boolean {
-        // Скрытые покемоны видны только в специальном фильтре HIDDEN.
         if (filter == StatusFilter.HIDDEN) return state.hidden
         if (state.hidden) return false
         return when (filter) {

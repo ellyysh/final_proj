@@ -8,6 +8,7 @@ import com.pokejournal.data.settings.SettingsRepository
 import com.pokejournal.domain.logic.message
 import com.pokejournal.domain.model.CollectionSummary
 import com.pokejournal.sync.SyncScheduler
+import com.pokejournal.ui.components.CreateDialogState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,13 +17,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-
-data class CreateDialogState(
-    val visible: Boolean = false,
-    val error: String? = null,
-)
 
 data class CollectionsUiState(
     val isLoading: Boolean = true,
@@ -58,18 +55,30 @@ class CollectionsViewModel @Inject constructor(
         when (event) {
             CollectionsEvent.OpenCreateDialog -> dialog.value = CreateDialogState(visible = true)
             CollectionsEvent.DismissDialog -> dialog.value = CreateDialogState()
-            is CollectionsEvent.Create -> viewModelScope.launch {
-                val profileId = settingsRepository.activeProfileId.first()
-                val result = collectionRepository.createCollection(profileId, event.name, event.description)
-                dialog.value = when (result) {
-                    is CreateResult.Created -> CreateDialogState()
-                    is CreateResult.Rejected -> CreateDialogState(visible = true, error = result.error.message())
-                }
+            is CollectionsEvent.Create -> {
+                if (dialog.value.submitting) return // защита от двойного нажатия
+                dialog.value = dialog.value.copy(submitting = true)
+                create(event)
             }
             is CollectionsEvent.Delete -> viewModelScope.launch {
                 collectionRepository.deleteCollection(event.collectionId)
             }
             is CollectionsEvent.DownloadOffline -> syncScheduler.downloadCollection(event.collectionId)
+        }
+    }
+
+    private fun create(event: CollectionsEvent.Create) {
+        viewModelScope.launch {
+            val profileId = settingsRepository.activeProfileId.first()
+            val result = collectionRepository.createCollection(profileId, event.name, event.description)
+            dialog.update { current ->
+                when {
+                    !current.visible -> current // диалог успели закрыть — не открываем заново
+                    result is CreateResult.Created -> CreateDialogState()
+                    result is CreateResult.Rejected -> CreateDialogState(visible = true, error = result.error.message())
+                    else -> current
+                }
+            }
         }
     }
 }

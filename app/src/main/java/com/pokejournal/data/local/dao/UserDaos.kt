@@ -142,7 +142,6 @@ interface CollectionDao {
     @Query("DELETE FROM collections WHERE id = :collectionId")
     suspend fun delete(collectionId: Long)
 
-    /** IGNORE — повторное добавление не создаёт дубль. */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun addItem(item: CollectionItemEntity): Long
 
@@ -199,10 +198,6 @@ interface FilterPresetDao {
 
 @Dao
 interface SyncDao {
-    /**
-     * Покемоны, важные пользователю (во всех профилях): в коллекциях, с личным статусом,
-     * закреплённые и из истории. Их детали предзагружаются для офлайна.
-     */
     @Query(
         """
         SELECT pokemonId FROM collection_items
@@ -212,4 +207,7 @@ interface SyncDao {
         """,
     )
     suspend fun importantPokemonIds(): List<Int>
+
+    @Query("SELECT DISTINCT pokemonId FROM collection_items")
+    suspend fun collectionPokemonIds(): List<Int>
 }

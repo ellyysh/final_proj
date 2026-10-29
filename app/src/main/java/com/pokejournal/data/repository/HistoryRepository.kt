@@ -10,10 +10,11 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** История просмотров карточек (recent) — без дублей, с лимитом из настроек профиля. */
 interface HistoryRepository {
     fun observeHistory(profileId: Long): Flow<List<HistoryEntry>>
     suspend fun record(profileId: Long, pokemonId: Int, limit: Int)
+
+    suspend fun applyLimit(profileId: Long, limit: Int)
     suspend fun remove(profileId: Long, pokemonId: Int)
     suspend fun clear(profileId: Long)
 }
@@ -33,8 +34,10 @@ class RoomHistoryRepository @Inject constructor(
 
     override suspend fun record(profileId: Long, pokemonId: Int, limit: Int) {
         dao.upsert(HistoryEntity(profileId, pokemonId, time.now()))
-        dao.trim(profileId, limit.coerceAtLeast(1))
+        applyLimit(profileId, limit)
     }
+
+    override suspend fun applyLimit(profileId: Long, limit: Int) = dao.trim(profileId, limit.coerceAtLeast(1))
 
     override suspend fun remove(profileId: Long, pokemonId: Int) = dao.delete(profileId, pokemonId)
 

@@ -41,7 +41,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.IOException
 
-/** UI-интеграция: Compose-экраны, навигация и связка экран + ViewModel. */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class PokemonListUiTest {

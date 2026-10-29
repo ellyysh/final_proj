@@ -13,15 +13,18 @@ import com.pokejournal.domain.logic.StatsCalculator
 import com.pokejournal.domain.logic.message
 import com.pokejournal.domain.model.JournalNote
 import com.pokejournal.domain.model.Profile
+import com.pokejournal.ui.components.CreateDialogState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -31,10 +34,13 @@ data class ProfileUiState(
     val profiles: List<Profile> = emptyList(),
     val stats: JournalStats = JournalStats(),
     val notes: List<JournalNote> = emptyList(),
+    val createDialog: CreateDialogState = CreateDialogState(),
 )
 
 sealed interface ProfileEvent {
     data class Switch(val profileId: Long) : ProfileEvent
+    data object OpenCreateDialog : ProfileEvent
+    data object DismissCreateDialog : ProfileEvent
     data class Create(val name: String, val avatar: String) : ProfileEvent
     data class Delete(val profileId: Long) : ProfileEvent
 }
@@ -59,35 +65,56 @@ class ProfileViewModel @Inject constructor(
         ) { states, notes, settings -> Triple(states, notes, settings) }
     }
 
+    /** Диалог создания профиля: закрывается только после успешной валидации. */
+    private val createDialog = MutableStateFlow(CreateDialogState())
+
     val uiState: StateFlow<ProfileUiState> = combine(
         profileRepository.observeProfiles(),
         settingsRepository.activeProfileId,
         pokemonRepository.observeCatalog(),
         personal,
-    ) { profiles, activeId, catalog, (states, notes, settings) ->
+        createDialog,
+    ) { profiles, activeId, catalog, (states, notes, settings), dialog ->
         ProfileUiState(
             isLoading = false,
             activeProfile = profiles.firstOrNull { it.id == activeId },
             profiles = profiles,
             stats = StatsCalculator.calculate(catalog, states, settings.pokedexSize),
             notes = notes,
+            createDialog = dialog,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ProfileUiState())
 
     fun onEvent(event: ProfileEvent) {
-        viewModelScope.launch {
-            when (event) {
-                is ProfileEvent.Switch -> settingsRepository.setActiveProfile(event.profileId)
-                is ProfileEvent.Create -> when (val result = profileRepository.createProfile(event.name, event.avatar)) {
-                    is CreateResult.Created -> {
-                        settingsRepository.setActiveProfile(result.id)
-                        messageChannel.send("Профиль «${event.name.trim()}» создан и выбран")
-                    }
-                    is CreateResult.Rejected -> messageChannel.send(result.error.message())
-                }
-                is ProfileEvent.Delete -> when (profileRepository.deleteProfile(event.profileId)) {
+        when (event) {
+            is ProfileEvent.Switch -> viewModelScope.launch { settingsRepository.setActiveProfile(event.profileId) }
+            ProfileEvent.OpenCreateDialog -> createDialog.value = CreateDialogState(visible = true)
+            ProfileEvent.DismissCreateDialog -> createDialog.value = CreateDialogState()
+            is ProfileEvent.Create -> {
+                if (createDialog.value.submitting) return // защита от двойного нажатия
+                createDialog.update { it.copy(submitting = true) }
+                createProfile(event)
+            }
+            is ProfileEvent.Delete -> viewModelScope.launch {
+                when (profileRepository.deleteProfile(event.profileId)) {
                     DeleteProfileResult.Deleted -> messageChannel.send("Профиль удалён вместе с его данными")
                     DeleteProfileResult.LastProfile -> messageChannel.send("Нельзя удалить единственный профиль")
+                }
+            }
+        }
+    }
+
+    private fun createProfile(event: ProfileEvent.Create) {
+        viewModelScope.launch {
+            when (val result = profileRepository.createProfile(event.name, event.avatar)) {
+                is CreateResult.Created -> {
+                    createDialog.value = CreateDialogState()
+                    settingsRepository.setActiveProfile(result.id)
+                    messageChannel.send("Профиль «${event.name.trim()}» создан и выбран")
+                }
+                // Ошибку показываем в самом диалоге: он остаётся открытым, имя и аватар не теряются.
+                is CreateResult.Rejected -> createDialog.update { current ->
+                    if (current.visible) CreateDialogState(visible = true, error = result.error.message()) else current
                 }
             }
         }

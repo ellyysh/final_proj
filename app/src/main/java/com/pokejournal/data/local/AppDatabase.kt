@@ -2,6 +2,7 @@ package com.pokejournal.data.local
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.pokejournal.data.local.dao.CacheMetaDao
 import com.pokejournal.data.local.dao.CollectionDao
@@ -40,7 +41,7 @@ import com.pokejournal.data.local.entity.ProfileEntity
         HistoryEntity::class,
         FilterPresetEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -58,7 +59,15 @@ abstract class AppDatabase : RoomDatabase() {
         const val NAME = "pokejournal.db"
         const val DEFAULT_PROFILE_ID = 1L
 
-        /** При первом создании БД заводим профиль по умолчанию. */
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE pokemon_details ADD COLUMN speciesLoaded INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
+        val ALL_MIGRATIONS = arrayOf(MIGRATION_1_2)
+
         val seedCallback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 db.execSQL(

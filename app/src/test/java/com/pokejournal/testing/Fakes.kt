@@ -1,13 +1,16 @@
 package com.pokejournal.testing
 
+import com.pokejournal.data.images.ArtworkStore
 import com.pokejournal.data.network.NetworkMonitor
 import com.pokejournal.data.repository.CollectionRepository
 import com.pokejournal.data.repository.CreateResult
+import com.pokejournal.data.repository.DeleteProfileResult
 import com.pokejournal.data.repository.HistoryRepository
 import com.pokejournal.data.repository.JournalRepository
 import com.pokejournal.data.repository.PokemonRepository
 import com.pokejournal.data.repository.PrefetchReport
 import com.pokejournal.data.repository.PresetRepository
+import com.pokejournal.data.repository.ProfileRepository
 import com.pokejournal.data.repository.RefreshResult
 import com.pokejournal.data.settings.SettingsRepository
 import com.pokejournal.domain.logic.NameValidation
@@ -23,12 +26,14 @@ import com.pokejournal.domain.model.ListFilter
 import com.pokejournal.domain.model.PokemonDetail
 import com.pokejournal.domain.model.PokemonSummary
 import com.pokejournal.domain.model.PokemonUserState
+import com.pokejournal.domain.model.Profile
 import com.pokejournal.domain.model.UserSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
+import java.io.File
 
 class FakeSettingsRepository(activeId: Long = 1L) : SettingsRepository {
     val active = MutableStateFlow(activeId)
@@ -106,16 +111,11 @@ class FakePokemonRepository : PokemonRepository {
         onProgress: suspend (done: Int, total: Int) -> Unit,
     ): PrefetchReport {
         prefetchRequests += ids
-        var updated = 0
-        var failed = 0
-        ids.forEachIndexed { index, id ->
-            when (refreshDetail(id, ttlMillis, force = false)) {
-                is RefreshResult.Failed -> failed++
-                else -> updated++
-            }
-            onProgress(index + 1, ids.size)
+        val unique = ids.distinct() // как и настоящий репозиторий
+        val results = unique.mapIndexed { index, id ->
+            refreshDetail(id, ttlMillis, force = false).also { onProgress(index + 1, unique.size) }
         }
-        return PrefetchReport(ids.size, updated, 0, failed)
+        return PrefetchReport.from(results)
     }
 }
 
@@ -243,10 +243,21 @@ class FakeHistoryRepository : HistoryRepository {
         list.filter { it.profileId == profileId }.map { HistoryEntry(it.pokemonId, null, "", 0L) }
     }
 
+    val appliedLimits = mutableListOf<Pair<Long, Int>>()
+
     override suspend fun record(profileId: Long, pokemonId: Int, limit: Int) {
         val record = Record(profileId, pokemonId, limit)
         records += record
         entries.update { it + record }
+    }
+
+    override suspend fun applyLimit(profileId: Long, limit: Int) {
+        appliedLimits += profileId to limit
+        entries.update { list ->
+            val own = list.filter { it.profileId == profileId }
+            val drop = own.dropLast(limit).toSet()
+            list.filterNot { it in drop }
+        }
     }
 
     override suspend fun remove(profileId: Long, pokemonId: Int) {
@@ -255,5 +266,57 @@ class FakeHistoryRepository : HistoryRepository {
 
     override suspend fun clear(profileId: Long) {
         entries.update { list -> list.filterNot { it.profileId == profileId } }
+    }
+}
+
+/** Хранилище картинок в памяти: [failing] — id, загрузка которых падает с заданной ошибкой. */
+class FakeArtworkStore : ArtworkStore {
+    val stored = mutableSetOf<Int>()
+    val ensureCalls = mutableListOf<Int>()
+    var failing: Map<Int, Throwable> = emptyMap()
+    var retainedWith: Set<Int>? = null
+
+    override fun localFile(pokemonId: Int): File? =
+        if (pokemonId in stored) File("artwork/$pokemonId.png") else null
+
+    override suspend fun ensure(pokemonId: Int): Throwable? {
+        ensureCalls += pokemonId
+        failing[pokemonId]?.let { return it }
+        stored += pokemonId
+        return null
+    }
+
+    override suspend fun retainOnly(loadKeepIds: suspend () -> Collection<Int>) {
+        val keep = loadKeepIds().toSet()
+        retainedWith = keep
+        stored.retainAll(keep)
+    }
+}
+
+class FakeProfileRepository : ProfileRepository {
+    val profiles = MutableStateFlow(listOf(Profile(1L, "Ash", "🔥", 0L)))
+    var createCalls = 0
+    private var nextId = 2L
+
+    override fun observeProfiles(): Flow<List<Profile>> = profiles
+
+    override fun observeProfile(id: Long): Flow<Profile?> = profiles.map { list -> list.firstOrNull { it.id == id } }
+
+    override suspend fun createProfile(name: String, avatar: String): CreateResult {
+        createCalls++
+        return when (val v = NameValidator.validate(name, profiles.value.map { it.name }, maxLength = 24)) {
+            is NameValidation.Invalid -> CreateResult.Rejected(v.error)
+            is NameValidation.Valid -> {
+                val profile = Profile(nextId++, v.name, avatar, 0L)
+                profiles.update { it + profile }
+                CreateResult.Created(profile.id)
+            }
+        }
+    }
+
+    override suspend fun deleteProfile(id: Long): DeleteProfileResult {
+        if (profiles.value.size <= 1) return DeleteProfileResult.LastProfile
+        profiles.update { list -> list.filterNot { it.id == id } }
+        return DeleteProfileResult.Deleted
     }
 }

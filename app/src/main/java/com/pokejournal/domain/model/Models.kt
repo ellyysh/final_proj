@@ -1,6 +1,6 @@
 package com.pokejournal.domain.model
 
-/** Краткая карточка покемона для каталога (живёт в Room, приходит из API). */
+
 data class PokemonSummary(
     val id: Int,
     val name: String,
@@ -10,10 +10,7 @@ data class PokemonSummary(
 
 data class PokemonStat(val name: String, val value: Int)
 
-/**
- * Полная информация о покемоне. Если [fetchedAt] == null — детали ещё не загружались,
- * доступны только базовые поля из каталога.
- */
+
 data class PokemonDetail(
     val id: Int,
     val name: String,
@@ -27,14 +24,13 @@ data class PokemonDetail(
     val abilities: List<String>,
     val stats: List<PokemonStat>,
     val fetchedAt: Long?,
+    val speciesLoaded: Boolean = true,
 ) {
     val isComplete: Boolean get() = fetchedAt != null
 }
 
-/** Личный статус покемона в журнале пользователя. */
 enum class CatchStatus { NONE, SEEN, WANTED, CAUGHT }
 
-/** Пользовательское состояние покемона внутри профиля. */
 data class PokemonUserState(
     val pokemonId: Int,
     val status: CatchStatus = CatchStatus.NONE,
@@ -98,7 +94,6 @@ data class JournalNote(
     val updatedAt: Long,
 )
 
-/** Сохранённый пресет поиска: запрос + фильтр. */
 data class FilterPreset(
     val id: Long,
     val name: String,
@@ -114,6 +109,14 @@ object PokemonTypes {
 }
 
 object PokemonImages {
-    fun artworkUrl(id: Int): String =
-        "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/$id.png"
+    private const val ARTWORK_PREFIX =
+        "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/"
+
+    fun artworkUrl(id: Int): String = "$ARTWORK_PREFIX$id.png"
+    fun idFromArtworkUrl(url: String): Int? =
+        if (url.startsWith(ARTWORK_PREFIX) && url.endsWith(".png")) {
+            url.substring(ARTWORK_PREFIX.length, url.length - ".png".length).toIntOrNull()
+        } else {
+            null
+        }
 }

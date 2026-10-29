@@ -81,7 +81,6 @@ fun ProfileScreen(
     onEvent: (ProfileEvent) -> Unit,
     onOpenDetail: (Int) -> Unit,
 ) {
-    var creating by rememberSaveable { mutableStateOf(false) }
     var pendingDelete by rememberSaveable { mutableStateOf<Long?>(null) }
 
     Scaffold(
@@ -89,7 +88,7 @@ fun ProfileScreen(
             TopAppBar(
                 title = { Text("Мой журнал") },
                 actions = {
-                    IconButton(onClick = { creating = true }) {
+                    IconButton(onClick = { onEvent(ProfileEvent.OpenCreateDialog) }) {
                         Icon(Icons.Outlined.PersonAdd, contentDescription = "Новый профиль")
                     }
                 },
@@ -156,13 +155,14 @@ fun ProfileScreen(
         }
     }
 
-    if (creating) {
+    // Диалог закрывает ViewModel после успешного создания; при ошибке валидации
+    // он остаётся открытым с сообщением, введённое имя и аватар сохраняются.
+    if (state.createDialog.visible) {
         CreateProfileDialog(
-            onCreate = { name, avatar ->
-                onEvent(ProfileEvent.Create(name, avatar))
-                creating = false
-            },
-            onDismiss = { creating = false },
+            error = state.createDialog.error,
+            submitting = state.createDialog.submitting,
+            onCreate = { name, avatar -> onEvent(ProfileEvent.Create(name, avatar)) },
+            onDismiss = { onEvent(ProfileEvent.DismissCreateDialog) },
         )
     }
     pendingDelete?.let { id ->
@@ -247,7 +247,12 @@ private fun TypeProgressCard(stats: JournalStats) {
 }
 
 @Composable
-private fun CreateProfileDialog(onCreate: (String, String) -> Unit, onDismiss: () -> Unit) {
+private fun CreateProfileDialog(
+    error: String?,
+    submitting: Boolean,
+    onCreate: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
     var name by rememberSaveable { mutableStateOf("") }
     var avatar by rememberSaveable { mutableStateOf(AVATARS.first()) }
     AlertDialog(
@@ -260,6 +265,12 @@ private fun CreateProfileDialog(onCreate: (String, String) -> Unit, onDismiss: (
                     onValueChange = { name = it },
                     label = { Text("Имя тренера") },
                     singleLine = true,
+                    isError = error != null,
+                    supportingText = if (error != null) {
+                        { Text(error) }
+                    } else {
+                        null
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(12.dp))
@@ -270,7 +281,9 @@ private fun CreateProfileDialog(onCreate: (String, String) -> Unit, onDismiss: (
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onCreate(name, avatar) }) { Text("Создать") } },
+        confirmButton = {
+            TextButton(onClick = { onCreate(name, avatar) }, enabled = !submitting) { Text("Создать") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

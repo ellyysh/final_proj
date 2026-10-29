@@ -4,6 +4,7 @@ import com.pokejournal.domain.model.FilterPreset
 import com.pokejournal.domain.model.ListFilter
 import com.pokejournal.domain.model.PokemonListItem
 import com.pokejournal.domain.model.StatusFilter
+import com.pokejournal.ui.components.CreateDialogState
 
 sealed interface ListContent {
     data object Loading : ListContent
@@ -24,6 +25,7 @@ data class PokemonListUiState(
     val lastSyncAt: Long? = null,
     val totalInDex: Int = 0,
     val presets: List<FilterPreset> = emptyList(),
+    val savePresetDialog: CreateDialogState = CreateDialogState(),
 )
 
 sealed interface PokemonListEvent {
@@ -34,6 +36,8 @@ sealed interface PokemonListEvent {
     data object Retry : PokemonListEvent
     data object ClearFilters : PokemonListEvent
     data class TogglePinned(val pokemonId: Int, val pinned: Boolean) : PokemonListEvent
+    data object OpenSavePresetDialog : PokemonListEvent
+    data object DismissSavePresetDialog : PokemonListEvent
     data class SavePreset(val name: String) : PokemonListEvent
     data class ApplyPreset(val preset: FilterPreset) : PokemonListEvent
     data class DeletePreset(val presetId: Long) : PokemonListEvent

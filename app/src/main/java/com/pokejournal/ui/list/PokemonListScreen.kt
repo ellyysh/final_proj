@@ -45,9 +45,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -100,7 +97,6 @@ fun PokemonListScreen(
     onOpenDetail: (Int) -> Unit,
     now: Long,
 ) {
-    var showSavePreset by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -118,7 +114,7 @@ fun PokemonListScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showSavePreset = true }) {
+                    IconButton(onClick = { onEvent(PokemonListEvent.OpenSavePresetDialog) }) {
                         Icon(Icons.Outlined.BookmarkAdd, contentDescription = "Сохранить фильтр")
                     }
                     IconButton(onClick = { onEvent(PokemonListEvent.Refresh) }) {
@@ -176,16 +172,15 @@ fun PokemonListScreen(
         }
     }
 
-    if (showSavePreset) {
+    if (state.savePresetDialog.visible) {
         TextInputDialog(
             title = "Сохранить фильтр",
             label = "Название пресета",
             confirmLabel = "Сохранить",
-            onConfirm = { name, _ ->
-                onEvent(PokemonListEvent.SavePreset(name))
-                showSavePreset = false
-            },
-            onDismiss = { showSavePreset = false },
+            error = state.savePresetDialog.error,
+            confirmEnabled = !state.savePresetDialog.submitting,
+            onConfirm = { name, _ -> onEvent(PokemonListEvent.SavePreset(name)) },
+            onDismiss = { onEvent(PokemonListEvent.DismissSavePresetDialog) },
         )
     }
 }

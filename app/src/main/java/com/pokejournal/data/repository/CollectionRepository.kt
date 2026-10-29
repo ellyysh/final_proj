@@ -1,6 +1,7 @@
 package com.pokejournal.data.repository
 
-import com.pokejournal.data.local.dao.CollectionDao
+import androidx.room.withTransaction
+import com.pokejournal.data.local.AppDatabase
 import com.pokejournal.data.local.entity.CollectionEntity
 import com.pokejournal.data.local.entity.CollectionItemEntity
 import com.pokejournal.data.local.entity.CollectionSummaryRow
@@ -20,7 +21,6 @@ sealed interface CreateResult {
     data class Rejected(val error: NameError) : CreateResult
 }
 
-/** Пользовательские коллекции покемонов (many-to-many). */
 interface CollectionRepository {
     fun observeCollections(profileId: Long): Flow<List<CollectionSummary>>
     fun observeCollection(collectionId: Long): Flow<CollectionSummary?>
@@ -34,9 +34,11 @@ interface CollectionRepository {
 
 @Singleton
 class RoomCollectionRepository @Inject constructor(
-    private val dao: CollectionDao,
+    private val db: AppDatabase,
     private val time: TimeProvider,
 ) : CollectionRepository {
+
+    private val dao = db.collectionDao()
 
     override fun observeCollections(profileId: Long): Flow<List<CollectionSummary>> =
         dao.observeSummaries(profileId).map { rows -> rows.map { it.toDomain() } }
@@ -61,6 +63,9 @@ class RoomCollectionRepository @Inject constructor(
         dao.observeCollectionIdsFor(profileId, pokemonId).map { it.toSet() }
 
     override suspend fun createCollection(profileId: Long, name: String, description: String): CreateResult =
+        db.withTransaction { insertValidated(profileId, name, description) }
+
+    private suspend fun insertValidated(profileId: Long, name: String, description: String): CreateResult =
         when (val validation = NameValidator.validate(name, dao.namesFor(profileId))) {
             is NameValidation.Invalid -> CreateResult.Rejected(validation.error)
             is NameValidation.Valid -> {

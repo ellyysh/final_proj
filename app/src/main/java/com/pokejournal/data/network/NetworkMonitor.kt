@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Поток состояния сети — один из источников экрана (офлайн-баннер, авто-синк). */
 interface NetworkMonitor {
     val isOnline: Flow<Boolean>
 }

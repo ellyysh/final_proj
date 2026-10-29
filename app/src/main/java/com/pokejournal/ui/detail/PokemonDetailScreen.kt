@@ -90,7 +90,6 @@ fun PokemonDetailScreen(
     now: Long,
 ) {
     var editingNote by rememberSaveable { mutableStateOf(false) }
-    var creatingCollection by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -136,7 +135,7 @@ fun PokemonDetailScreen(
                     now = now,
                     onEvent = onEvent,
                     onEditNote = { editingNote = true },
-                    onCreateCollection = { creatingCollection = true },
+                    onCreateCollection = { onEvent(PokemonDetailEvent.OpenCreateCollectionDialog) },
                 )
             }
         }
@@ -156,16 +155,16 @@ fun PokemonDetailScreen(
             onDismiss = { editingNote = false },
         )
     }
-    if (creatingCollection) {
+    // Закрывается ViewModel'ю после успешного создания; при ошибке остаётся открытым с сообщением.
+    if (state.createCollectionDialog.visible) {
         TextInputDialog(
             title = "Новая коллекция",
             label = "Название",
             confirmLabel = "Создать и добавить",
-            onConfirm = { name, _ ->
-                onEvent(PokemonDetailEvent.CreateCollectionWithPokemon(name))
-                creatingCollection = false
-            },
-            onDismiss = { creatingCollection = false },
+            error = state.createCollectionDialog.error,
+            confirmEnabled = !state.createCollectionDialog.submitting,
+            onConfirm = { name, _ -> onEvent(PokemonDetailEvent.CreateCollectionWithPokemon(name)) },
+            onDismiss = { onEvent(PokemonDetailEvent.DismissCreateCollectionDialog) },
         )
     }
 }

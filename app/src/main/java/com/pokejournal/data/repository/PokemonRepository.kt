@@ -16,6 +16,9 @@ import com.pokejournal.data.remote.PokeApi
 import com.pokejournal.data.remote.PokemonDto
 import com.pokejournal.data.remote.SpeciesDto
 import com.pokejournal.domain.logic.CachePolicy
+import com.pokejournal.domain.logic.ProgressCounter
+import com.pokejournal.domain.logic.isRetryable
+import com.pokejournal.domain.logic.mapConcurrently
 import com.pokejournal.domain.logic.TimeProvider
 import com.pokejournal.domain.model.PokemonDetail
 import com.pokejournal.domain.model.PokemonImages
@@ -32,21 +35,47 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 sealed interface RefreshResult {
-    /** Данные скачаны и записаны в Room. */
+
     data object Updated : RefreshResult
 
-    /** Кэш свежий по TTL — сеть не трогали. */
     data object UpToDate : RefreshResult
 
     data class Failed(val error: Throwable) : RefreshResult
+
+    data class Partial(val error: Throwable) : RefreshResult
 }
 
-data class PrefetchReport(val total: Int, val updated: Int, val upToDate: Int, val failed: Int)
+val RefreshResult.errorOrNull: Throwable?
+    get() = when (this) {
+        is RefreshResult.Failed -> error
+        is RefreshResult.Partial -> error
+        RefreshResult.Updated, RefreshResult.UpToDate -> null
+    }
 
-/**
- * Offline-first репозиторий контента: UI читает только Room (Flow),
- * сеть используется для обновления локальной копии.
- */
+
+data class PrefetchReport(
+    val total: Int,
+    val updated: Int,
+    val upToDate: Int,
+    val failed: Int,
+    val partial: Int = 0,
+    val retryable: Int = 0,
+) {
+    val hasProblems: Boolean get() = failed > 0 || partial > 0
+
+    companion object {
+        fun from(results: List<RefreshResult>) = PrefetchReport(
+            total = results.size,
+            updated = results.count { it == RefreshResult.Updated },
+            upToDate = results.count { it == RefreshResult.UpToDate },
+            failed = results.count { it is RefreshResult.Failed },
+            partial = results.count { it is RefreshResult.Partial },
+            retryable = results.count { it.errorOrNull?.isRetryable() == true },
+        )
+    }
+}
+
+
 interface PokemonRepository {
     fun observeCatalog(): Flow<List<PokemonSummary>>
     fun observeDetail(id: Int): Flow<PokemonDetail?>
@@ -114,34 +143,45 @@ class OfflineFirstPokemonRepository @Inject constructor(
 
             db.withTransaction {
                 pokemonDao.upsertPokemon(pokemon)
-                // SQLite на старых API ограничивает число параметров (999) — режем на чанки.
                 ids.chunked(SQL_CHUNK).forEach { pokemonDao.deleteTypesFor(it) }
                 pokemonDao.insertTypes(types)
-                metaDao.upsert(CacheMetaEntity(KEY_CATALOG, time.now(), maxOf(limit, meta?.itemCount ?: 0)))
+                metaDao.upsert(CacheMetaEntity(KEY_CATALOG, time.now(), limit))
             }
         }
     }
 
     override suspend fun refreshDetail(id: Int, ttlMillis: Long, force: Boolean): RefreshResult {
-        val fetchedAt = pokemonDao.detailFetchedAt(id)
-        if (!force && !CachePolicy.isStale(fetchedAt, time.now(), ttlMillis)) return RefreshResult.UpToDate
+        val existing = pokemonDao.getDetail(id)
+        val needsRefresh = CachePolicy.needsDetailRefresh(
+            fetchedAt = existing?.fetchedAt,
+            complete = existing?.speciesLoaded ?: false,
+            now = time.now(),
+            ttlMillis = ttlMillis,
+        )
+        if (!force && !needsRefresh) return RefreshResult.UpToDate
 
-        return safeCall {
+        return try {
             val (pokemon, species) = coroutineScope {
                 val pokemonCall = async { api.getPokemon(id) }
-                // Species — дополнительная информация, её ошибка не должна ломать карточку.
                 val speciesCall = async {
                     try {
-                        api.getSpecies(id)
+                        Result.success(api.getSpecies(id))
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        null
+                        Result.failure<SpeciesDto>(e)
                     }
                 }
                 pokemonCall.await() to speciesCall.await()
             }
-            savePokemonDetail(pokemon, species)
+            val speciesError = species.exceptionOrNull()
+            val speciesLoaded = speciesError == null || !speciesError.isRetryable()
+            savePokemonDetail(pokemon, species.getOrNull(), speciesLoaded, previous = existing)
+            if (speciesLoaded) RefreshResult.Updated else RefreshResult.Partial(speciesError!!)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            RefreshResult.Failed(e)
         }
     }
 
@@ -151,21 +191,19 @@ class OfflineFirstPokemonRepository @Inject constructor(
         onProgress: suspend (done: Int, total: Int) -> Unit,
     ): PrefetchReport {
         val unique = ids.distinct()
-        var updated = 0
-        var upToDate = 0
-        var failed = 0
-        unique.forEachIndexed { index, id ->
-            when (refreshDetail(id, ttlMillis, force = false)) {
-                RefreshResult.Updated -> updated++
-                RefreshResult.UpToDate -> upToDate++
-                is RefreshResult.Failed -> failed++
-            }
-            onProgress(index + 1, unique.size)
+        val progress = ProgressCounter(unique.size, onProgress)
+        val results = unique.mapConcurrently(PREFETCH_CONCURRENCY) { id ->
+            refreshDetail(id, ttlMillis, force = false).also { progress.step() }
         }
-        return PrefetchReport(unique.size, updated, upToDate, failed)
+        return PrefetchReport.from(results)
     }
 
-    private suspend fun savePokemonDetail(dto: PokemonDto, species: SpeciesDto?) {
+    private suspend fun savePokemonDetail(
+        dto: PokemonDto,
+        species: SpeciesDto?,
+        speciesLoaded: Boolean,
+        previous: PokemonDetailEntity?,
+    ) {
         val now = time.now()
         db.withTransaction {
             pokemonDao.upsertPokemon(
@@ -177,10 +215,11 @@ class OfflineFirstPokemonRepository @Inject constructor(
                     height = dto.height,
                     weight = dto.weight,
                     baseExperience = dto.baseExperience,
-                    genus = species?.englishGenus(),
-                    flavorText = species?.englishFlavorText(),
+                    genus = if (species != null) species.englishGenus() else previous?.genus,
+                    flavorText = if (species != null) species.englishFlavorText() else previous?.flavorText,
                     abilities = dto.abilities.joinToString(ABILITY_SEPARATOR) { it.ability.name },
                     fetchedAt = now,
+                    speciesLoaded = speciesLoaded,
                 ),
             )
             pokemonDao.deleteStats(dto.id)
@@ -205,6 +244,7 @@ class OfflineFirstPokemonRepository @Inject constructor(
 
     companion object {
         const val KEY_CATALOG = "catalog"
+        const val PREFETCH_CONCURRENCY = 4
         private const val SQL_CHUNK = 500
         private const val ABILITY_SEPARATOR = ","
     }
@@ -230,4 +270,5 @@ internal fun PokemonFull.toDetail() = PokemonDetail(
     abilities = detail?.abilities?.split(",")?.filter { it.isNotBlank() }.orEmpty(),
     stats = stats.sortedBy { it.position }.map { PokemonStat(it.statName, it.value) },
     fetchedAt = detail?.fetchedAt,
+    speciesLoaded = detail?.speciesLoaded ?: false,
 )

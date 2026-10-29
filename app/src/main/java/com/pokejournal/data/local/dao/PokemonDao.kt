@@ -26,8 +26,8 @@ interface PokemonDao {
     @Query("SELECT * FROM pokemon WHERE id = :id")
     fun observeFull(id: Int): Flow<PokemonFull?>
 
-    @Query("SELECT fetchedAt FROM pokemon_details WHERE pokemonId = :id")
-    suspend fun detailFetchedAt(id: Int): Long?
+    @Query("SELECT * FROM pokemon_details WHERE pokemonId = :id")
+    suspend fun getDetail(id: Int): PokemonDetailEntity?
 
     @Query("SELECT COUNT(*) FROM pokemon")
     suspend fun count(): Int

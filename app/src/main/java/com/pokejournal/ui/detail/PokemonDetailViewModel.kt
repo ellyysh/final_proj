@@ -14,12 +14,14 @@ import com.pokejournal.data.settings.SettingsRepository
 import com.pokejournal.domain.logic.message
 import com.pokejournal.domain.logic.toUserMessage
 import com.pokejournal.domain.model.PokemonUserState
+import com.pokejournal.ui.components.CreateDialogState
 import com.pokejournal.ui.list.RefreshState
 import com.pokejournal.ui.navigation.Routes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -30,6 +32,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -60,7 +63,10 @@ class PokemonDetailViewModel @Inject constructor(
                 val ttl = settingsRepository.appSettings.first().cacheTtlMillis
                 when (val result = pokemonRepository.refreshDetail(pokemonId, ttl, force)) {
                     is RefreshResult.Failed -> emit(RefreshState.Failed(result.error.toUserMessage()))
-                    else -> emit(RefreshState.Idle)
+                    // Карточка сохранена, но без описания — показываем её и сообщаем о недогрузке.
+                    is RefreshResult.Partial ->
+                        emit(RefreshState.Failed("Описание не загрузилось: ${result.error.toUserMessage()}"))
+                    RefreshResult.Updated, RefreshResult.UpToDate -> emit(RefreshState.Idle)
                 }
             }
         }
@@ -82,12 +88,16 @@ class PokemonDetailViewModel @Inject constructor(
         }
     }
 
+    /** Диалог «новая коллекция»: закрывается только после успешного создания. */
+    private val createCollectionDialog = MutableStateFlow(CreateDialogState())
+
     val uiState: StateFlow<PokemonDetailUiState> = combine(
         pokemonRepository.observeDetail(pokemonId),
         refreshState,
         userPart,
         networkMonitor.isOnline,
-    ) { detail, refresh, user, online ->
+        createCollectionDialog,
+    ) { detail, refresh, user, online, dialog ->
         val hasDetail = detail?.isComplete == true
         val content = when {
             hasDetail -> DetailContent.Success(detail!!)
@@ -104,6 +114,7 @@ class PokemonDetailViewModel @Inject constructor(
             userState = user.state,
             note = user.note,
             collections = user.collections,
+            createCollectionDialog = dialog,
         )
     }.stateIn(
         viewModelScope,
@@ -142,14 +153,28 @@ class PokemonDetailViewModel @Inject constructor(
             is PokemonDetailEvent.ToggleCollection -> withProfile {
                 collectionRepository.setMembership(event.collectionId, pokemonId, event.selected)
             }
-            is PokemonDetailEvent.CreateCollectionWithPokemon -> withProfile { pid ->
-                when (val result = collectionRepository.createCollection(pid, event.name, description = "")) {
-                    is CreateResult.Created -> {
-                        collectionRepository.setMembership(result.id, pokemonId, member = true)
-                        messageChannel.send("Добавлено в «${event.name.trim()}»")
-                    }
-                    is CreateResult.Rejected -> messageChannel.send(result.error.message())
-                }
+            PokemonDetailEvent.OpenCreateCollectionDialog ->
+                createCollectionDialog.value = CreateDialogState(visible = true)
+            PokemonDetailEvent.DismissCreateCollectionDialog ->
+                createCollectionDialog.value = CreateDialogState()
+            is PokemonDetailEvent.CreateCollectionWithPokemon -> {
+                if (createCollectionDialog.value.submitting) return // защита от двойного нажатия
+                createCollectionDialog.update { it.copy(submitting = true) }
+                withProfile { pid -> createCollectionWithPokemon(pid, event.name) }
+            }
+        }
+    }
+
+    private suspend fun createCollectionWithPokemon(profileId: Long, name: String) {
+        when (val result = collectionRepository.createCollection(profileId, name, description = "")) {
+            is CreateResult.Created -> {
+                collectionRepository.setMembership(result.id, pokemonId, member = true)
+                createCollectionDialog.value = CreateDialogState()
+                messageChannel.send("Добавлено в «${name.trim()}»")
+            }
+            // Диалог остаётся открытым с ошибкой — введённое название не теряется.
+            is CreateResult.Rejected -> createCollectionDialog.update { current ->
+                if (current.visible) CreateDialogState(visible = true, error = result.error.message()) else current
             }
         }
     }

@@ -20,4 +20,12 @@ object CachePolicy {
         now: Long,
         ttlMillis: Long,
     ): Boolean = cachedLimit < requiredLimit || isStale(updatedAt, now, ttlMillis)
+
+    /**
+     * Карточку нужно перезагрузить, если она устарела по TTL или была сохранена неполной
+     * (не догрузилось описание вида). Неполные данные не считаются актуальными,
+     * иначе они «застревают» до истечения TTL.
+     */
+    fun needsDetailRefresh(fetchedAt: Long?, complete: Boolean, now: Long, ttlMillis: Long): Boolean =
+        !complete || isStale(fetchedAt, now, ttlMillis)
 }

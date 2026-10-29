@@ -21,10 +21,6 @@ import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Настройки и предпочтения (DataStore). Пользовательские данные сюда не кладутся —
- * они живут в Room. Настройки профиля хранятся под ключами с префиксом profileId.
- */
 interface SettingsRepository {
     val activeProfileId: Flow<Long>
     val appSettings: Flow<AppSettings>
@@ -35,7 +31,6 @@ interface SettingsRepository {
     suspend fun clearUserSettings(profileId: Long)
 }
 
-/** Настройки активного профиля — автоматически переключаются при смене профиля. */
 val SettingsRepository.activeUserSettings: Flow<UserSettings>
     get() = activeProfileId.flatMapLatest { userSettings(it) }
 

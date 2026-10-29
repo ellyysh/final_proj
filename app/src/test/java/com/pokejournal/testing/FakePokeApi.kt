@@ -12,9 +12,14 @@ import com.pokejournal.data.remote.PokemonTypeSlotDto
 import com.pokejournal.data.remote.SpeciesDto
 import com.pokejournal.data.remote.TypeDto
 import com.pokejournal.data.remote.TypePokemonDto
+import com.pokejournal.domain.model.PokemonTypes
+import kotlinx.coroutines.delay
+import okhttp3.ResponseBody.Companion.toResponseBody
+import retrofit2.HttpException
+import retrofit2.Response
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicInteger
 
-/** Фейковое PokeAPI для интеграционных тестов data-слоя. */
 class FakePokeApi(
     private val pokemon: List<Pair<Int, List<String>>> = listOf(
         1 to listOf("grass", "poison"),
@@ -25,11 +30,34 @@ class FakePokeApi(
 ) : PokeApi {
     private val names = mapOf(1 to "bulbasaur", 4 to "charmander", 7 to "squirtle", 25 to "pikachu")
 
-    var offline = false
-    var listCalls = 0
-    var typeCalls = 0
-    var pokemonCalls = 0
-    var failingPokemonIds: Set<Int> = emptySet()
+    @Volatile var offline = false
+
+    val failNextListCalls = AtomicInteger(0)
+
+    @Volatile var failingPokemonIds: Set<Int> = emptySet()
+
+    @Volatile var notFoundPokemonIds: Set<Int> = emptySet()
+
+    @Volatile var failingSpeciesIds: Set<Int> = emptySet()
+
+    @Volatile var notFoundSpeciesIds: Set<Int> = emptySet()
+
+    @Volatile var pokemonDelayMillis = 0L
+
+    private val listCallsCounter = AtomicInteger()
+    private val listAttemptsCounter = AtomicInteger()
+    private val typeCallsCounter = AtomicInteger()
+    private val pokemonCallsCounter = AtomicInteger()
+    private val inFlight = AtomicInteger()
+    private val maxInFlightCounter = AtomicInteger()
+
+    val listCalls: Int get() = listCallsCounter.get()
+
+    val listAttempts: Int get() = listAttemptsCounter.get()
+    val typeCalls: Int get() = typeCallsCounter.get()
+    val pokemonCalls: Int get() = pokemonCallsCounter.get()
+
+    val maxConcurrentPokemonCalls: Int get() = maxInFlightCounter.get()
 
     private fun url(kind: String, id: Int) = "https://pokeapi.co/api/v2/$kind/$id/"
     private fun nameOf(id: Int) = names[id] ?: "pokemon-$id"
@@ -39,15 +67,17 @@ class FakePokeApi(
     }
 
     override suspend fun getPokemonList(limit: Int, offset: Int): NamedResourceListDto {
+        listAttemptsCounter.incrementAndGet()
         ensureOnline()
-        listCalls++
+        if (failNextListCalls.getAndUpdate { if (it > 0) it - 1 else 0 } > 0) throw IOException("flaky network")
+        listCallsCounter.incrementAndGet()
         val results = pokemon.filter { it.first <= limit }.map { NamedResourceDto(nameOf(it.first), url("pokemon", it.first)) }
         return NamedResourceListDto(count = results.size, results = results)
     }
 
     override suspend fun getType(name: String): TypeDto {
         ensureOnline()
-        typeCalls++
+        typeCallsCounter.incrementAndGet()
         val entries = pokemon.filter { name in it.second }.map { (id, types) ->
             TypePokemonDto(slot = types.indexOf(name) + 1, pokemon = NamedResourceDto(nameOf(id), url("pokemon", id)))
         } + TypePokemonDto(1, NamedResourceDto("mega-form", url("pokemon", 10_001))) // альт-формы отсекаются
@@ -56,8 +86,16 @@ class FakePokeApi(
 
     override suspend fun getPokemon(id: Int): PokemonDto {
         ensureOnline()
-        pokemonCalls++
-        if (id in failingPokemonIds) throw IOException("broken $id")
+        pokemonCallsCounter.incrementAndGet()
+        val now = inFlight.incrementAndGet()
+        maxInFlightCounter.updateAndGet { maxOf(it, now) }
+        try {
+            if (pokemonDelayMillis > 0) delay(pokemonDelayMillis)
+            if (id in failingPokemonIds) throw IOException("broken $id")
+            if (id in notFoundPokemonIds) throw notFound()
+        } finally {
+            inFlight.decrementAndGet()
+        }
         val types = pokemon.firstOrNull { it.first == id }?.second ?: listOf("normal")
         return PokemonDto(
             id = id,
@@ -76,9 +114,23 @@ class FakePokeApi(
 
     override suspend fun getSpecies(id: Int): SpeciesDto {
         ensureOnline()
+        if (id in failingSpeciesIds) throw IOException("species timeout $id")
+        if (id in notFoundSpeciesIds) throw notFound()
         return SpeciesDto(
             genera = listOf(GenusDto("Seed Pokémon", NamedResourceDto("en", ""))),
             flavorTextEntries = listOf(FlavorTextDto("A strange seed was\nplanted\u000con its back.", NamedResourceDto("en", ""))),
+        )
+    }
+
+    private fun notFound() = HttpException(Response.error<Unit>(404, "".toResponseBody(null)))
+
+    companion object {
+        fun withCatalog(size: Int) = FakePokeApi(
+            pokemon = (1..size).map { id ->
+                val primary = PokemonTypes.ALL[id % PokemonTypes.ALL.size]
+                val types = if (id % 3 == 0) listOf(primary, PokemonTypes.ALL[(id + 7) % PokemonTypes.ALL.size]) else listOf(primary)
+                id to types.distinct()
+            },
         )
     }
 }

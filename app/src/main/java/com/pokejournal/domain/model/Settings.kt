@@ -4,7 +4,6 @@ enum class SortOrder { NUMBER, NAME, STATUS }
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
-/** Настройки, которые принадлежат конкретному локальному профилю. */
 data class UserSettings(
     val sortOrder: SortOrder = SortOrder.NUMBER,
     val pokedexSize: Int = DEFAULT_POKEDEX_SIZE,
@@ -19,7 +18,6 @@ data class UserSettings(
     }
 }
 
-/** Глобальные настройки приложения: кэш, синхронизация, офлайн. */
 data class AppSettings(
     val cacheTtlHours: Int = 24,
     val backgroundSyncEnabled: Boolean = true,

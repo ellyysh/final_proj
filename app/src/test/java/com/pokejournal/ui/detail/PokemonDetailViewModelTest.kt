@@ -11,6 +11,7 @@ import com.pokejournal.testing.FakePokemonRepository
 import com.pokejournal.testing.FakeSettingsRepository
 import com.pokejournal.testing.MainDispatcherRule
 import com.pokejournal.testing.TestData
+import com.pokejournal.ui.components.CreateDialogState
 import com.pokejournal.ui.navigation.Routes
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -105,23 +106,47 @@ class PokemonDetailViewModelTest {
         advanceUntilIdle()
         assertEquals(CatchStatus.NONE, vm.uiState.value.userState.status)
         assertEquals("Встретил в Viridian Forest", vm.uiState.value.note)
-        // Открытие карточки попало в историю обоих профилей.
         assertEquals(listOf(1L, 2L), history.records.map { it.profileId })
     }
 
     @Test
-    fun `create collection from detail adds pokemon and duplicate name is rejected`() = runTest {
+    fun `create collection from detail adds pokemon and closes dialog only on success`() = runTest {
         val vm = createViewModel()
         advanceUntilIdle()
 
+        vm.onEvent(PokemonDetailEvent.OpenCreateCollectionDialog)
         vm.onEvent(PokemonDetailEvent.CreateCollectionWithPokemon("Команда"))
         advanceUntilIdle()
         assertEquals("Добавлено в «Команда»", vm.messages.first())
         assertEquals(listOf(CollectionChoice(1L, "Команда", selected = true)), vm.uiState.value.collections)
+        assertEquals(CreateDialogState(), vm.uiState.value.createCollectionDialog)
 
+        vm.onEvent(PokemonDetailEvent.OpenCreateCollectionDialog)
         vm.onEvent(PokemonDetailEvent.CreateCollectionWithPokemon("команда"))
         advanceUntilIdle()
-        assertEquals("Такое название уже есть", vm.messages.first())
+        assertEquals(
+            CreateDialogState(visible = true, error = "Такое название уже есть"),
+            vm.uiState.value.createCollectionDialog,
+        )
         assertEquals(1, collections.collections.value.size)
+            .
+        vm.onEvent(PokemonDetailEvent.CreateCollectionWithPokemon("Команда 2"))
+        advanceUntilIdle()
+        assertEquals(false, vm.uiState.value.createCollectionDialog.visible)
+        assertEquals(2, collections.collections.value.size)
+    }
+
+    @Test
+    fun `double tap on create submits only once`() = runTest {
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        vm.onEvent(PokemonDetailEvent.OpenCreateCollectionDialog)
+        vm.onEvent(PokemonDetailEvent.CreateCollectionWithPokemon("Команда"))
+        vm.onEvent(PokemonDetailEvent.CreateCollectionWithPokemon("Команда"))
+        advanceUntilIdle()
+
+        assertEquals(1, collections.collections.value.size)
+        assertEquals(CreateDialogState(), vm.uiState.value.createCollectionDialog)
     }
 }

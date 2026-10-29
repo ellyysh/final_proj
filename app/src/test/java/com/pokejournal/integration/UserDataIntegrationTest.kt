@@ -22,7 +22,11 @@ import com.pokejournal.domain.model.PokemonImages
 import com.pokejournal.domain.model.StatusFilter
 import com.pokejournal.testing.FakeSettingsRepository
 import com.pokejournal.testing.FakeTime
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -33,7 +37,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/** Пользовательская локальная модель на настоящей Room: коллекции, профили, журнал, история. */
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class UserDataIntegrationTest {
@@ -53,11 +57,11 @@ class UserDataIntegrationTest {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        collections = RoomCollectionRepository(db.collectionDao(), time)
-        journal = RoomJournalRepository(db.userStateDao(), db.noteDao(), time)
+        collections = RoomCollectionRepository(db, time)
+        journal = RoomJournalRepository(db, time)
         history = RoomHistoryRepository(db.historyDao(), time)
-        profiles = RoomProfileRepository(db.profileDao(), settings, time)
-        presets = RoomPresetRepository(db.filterPresetDao(), time)
+        profiles = RoomProfileRepository(db, settings, time)
+        presets = RoomPresetRepository(db, time)
 
         db.profileDao().insert(ProfileEntity(id = 1, name = "Ash", avatar = "🔥", createdAt = 1))
         db.profileDao().insert(ProfileEntity(id = 2, name = "Misty", avatar = "💧", createdAt = 2))
@@ -112,7 +116,7 @@ class UserDataIntegrationTest {
         journal.setStatus(1L, 7, CatchStatus.NONE)
         assertTrue(journal.observeStates(1L).first().isEmpty())
 
-        // Скрытие снимает закрепление.
+
         journal.setHidden(2L, 7, true)
         val hidden = journal.observeState(2L, 7).first()
         assertTrue(hidden.hidden && !hidden.pinned)
@@ -149,7 +153,6 @@ class UserDataIntegrationTest {
         assertTrue(history.observeHistory(2L).first().isEmpty())
         assertTrue(presets.observePresets(2L).first().isEmpty())
         assertTrue(settings.users.value[2L] == null)
-        // Удалить последний профиль нельзя.
         assertEquals(DeleteProfileResult.LastProfile, profiles.deleteProfile(1L))
     }
 
@@ -159,10 +162,70 @@ class UserDataIntegrationTest {
         collections.setMembership(collectionId, 1, true)
         journal.setStatus(2L, 4, CatchStatus.WANTED)
         history.record(1L, 7, 10)
-        journal.setHidden(1L, 25, true) // только скрытие — не повод качать офлайн
+        journal.setHidden(1L, 25, true)
 
         val ids = RoomImportantPokemonSource(db.syncDao()).importantIds().sorted()
 
         assertEquals(listOf(1, 4, 7), ids)
+    }
+
+    @Test
+    fun `concurrent journal updates of the same pokemon are not lost`() = runTest {
+        val ids = 1..60
+          withContext(Dispatchers.Default) {
+            ids.flatMap { id ->
+                listOf(
+                    async { journal.setStatus(1L, id, CatchStatus.CAUGHT) },
+                    async { journal.setPinned(1L, id, true) },
+                )
+            }.awaitAll()
+        }
+
+        val states = journal.observeStates(1L).first()
+        assertEquals(ids.count(), states.size)
+        assertTrue(states.values.all { it.status == CatchStatus.CAUGHT && it.pinned })
+    }
+
+    @Test
+    fun `concurrent hide and status change keep both changes`() = runTest {
+        journal.setPinned(1L, 7, true)
+
+        withContext(Dispatchers.Default) {
+            listOf(
+                async { journal.setHidden(1L, 7, true) },
+                async { journal.setStatus(1L, 7, CatchStatus.SEEN) },
+            ).awaitAll()
+        }
+
+        val state = journal.observeState(1L, 7).first()
+        assertTrue(state.hidden)
+        assertEquals(CatchStatus.SEEN, state.status)
+        assertTrue(!state.pinned)
+    }
+
+    @Test
+    fun `double submit of the same collection name creates exactly one collection`() = runTest {
+        val results = withContext(Dispatchers.Default) {
+            (1..8).map { async { collections.createCollection(1L, "Team", "") } }.awaitAll()
+        }
+
+        assertEquals(1, results.count { it is CreateResult.Created })
+        assertEquals(7, results.count { it == CreateResult.Rejected(NameError.DUPLICATE) })
+        assertEquals(1, collections.observeCollections(1L).first().size)
+    }
+
+    @Test
+    fun `lowering history limit trims existing entries immediately`() = runTest {
+        (1..30).forEach {
+            history.record(1L, it, limit = 100)
+            time.advance(1_000)
+        }
+        history.record(2L, 1, limit = 100)
+
+        history.applyLimit(1L, 20)
+
+        val left = history.observeHistory(1L).first().map { it.pokemonId }
+        assertEquals((30 downTo 11).toList(), left) // остались 20 самых свежих
+        assertEquals(1, history.observeHistory(2L).first().size) // другой профиль не тронут
     }
 }

@@ -5,10 +5,29 @@ import androidx.hilt.work.HiltWorker
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import com.pokejournal.domain.logic.isRetryable
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 
-/** Периодическая (и ручная) синхронизация каталога + офлайн-предзагрузка. */
+enum class WorkDecision { SUCCESS, RETRY, FAILURE }
+
+object SyncRetryPolicy {
+    const val MAX_ATTEMPTS = 3
+
+    fun forSync(outcome: SyncOutcome, attempt: Int): WorkDecision = when (outcome) {
+        is SyncOutcome.Failure ->
+            if (outcome.error.isRetryable() && attempt < MAX_ATTEMPTS) WorkDecision.RETRY else WorkDecision.FAILURE
+        is SyncOutcome.Success ->
+            if (outcome.hasRetryableFailures && attempt < MAX_ATTEMPTS) WorkDecision.RETRY else WorkDecision.SUCCESS
+    }
+
+    fun forCollection(report: OfflineDownloadReport, attempt: Int): WorkDecision = when {
+        report.failed == 0 -> WorkDecision.SUCCESS
+        report.retryable > 0 && attempt < MAX_ATTEMPTS -> WorkDecision.RETRY
+        else -> WorkDecision.FAILURE
+    }
+}
+
 @HiltWorker
 class CatalogSyncWorker @AssistedInject constructor(
     @Assisted context: Context,
@@ -16,28 +35,30 @@ class CatalogSyncWorker @AssistedInject constructor(
     private val offlineSync: OfflineSync,
 ) : CoroutineWorker(context, params) {
 
-    override suspend fun doWork(): Result =
-        when (val outcome = offlineSync.syncCatalogAndPrefetch { done, total -> reportProgress(done, total) }) {
-            is SyncOutcome.Failure ->
-                if (runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.failure()
-            is SyncOutcome.Success -> Result.success(
-                workDataOf(
-                    WorkKeys.UPDATED to (outcome.prefetch?.updated ?: 0),
-                    WorkKeys.FAILED to (outcome.prefetch?.failed ?: 0),
-                ),
+    override suspend fun doWork(): Result {
+        val outcome = offlineSync.syncCatalogAndPrefetch { done, total -> reportProgress(done, total) }
+        val output = (outcome as? SyncOutcome.Success)?.let {
+            workDataOf(
+                WorkKeys.UPDATED to (it.prefetch?.updated ?: 0),
+                WorkKeys.FAILED to it.failedCount,
             )
         }
+        return when (SyncRetryPolicy.forSync(outcome, runAttemptCount)) {
+            WorkDecision.SUCCESS -> if (output != null) Result.success(output) else Result.success()
+            WorkDecision.RETRY -> Result.retry()
+            WorkDecision.FAILURE -> Result.failure()
+        }
+    }
 
     private suspend fun reportProgress(done: Int, total: Int) {
         setProgress(workDataOf(WorkKeys.DONE to done, WorkKeys.TOTAL to total))
     }
 
     companion object {
-        const val MAX_ATTEMPTS = 3
+        const val MAX_ATTEMPTS = SyncRetryPolicy.MAX_ATTEMPTS
     }
 }
 
-/** Скачивает детали всех покемонов коллекции, чтобы она работала без сети. */
 @HiltWorker
 class CollectionDownloadWorker @AssistedInject constructor(
     @Assisted context: Context,
@@ -53,14 +74,14 @@ class CollectionDownloadWorker @AssistedInject constructor(
             setProgress(workDataOf(WorkKeys.DONE to done, WorkKeys.TOTAL to total))
         }
         val output = workDataOf(
-            WorkKeys.UPDATED to report.updated,
+            WorkKeys.UPDATED to report.ready,
             WorkKeys.FAILED to report.failed,
             WorkKeys.TOTAL to report.total,
         )
-        return when {
-            report.failed == 0 -> Result.success(output)
-            runAttemptCount < CatalogSyncWorker.MAX_ATTEMPTS -> Result.retry()
-            else -> Result.failure(output)
+        return when (SyncRetryPolicy.forCollection(report, runAttemptCount)) {
+            WorkDecision.SUCCESS -> Result.success(output)
+            WorkDecision.RETRY -> Result.retry()
+            WorkDecision.FAILURE -> Result.failure(output)
         }
     }
 }

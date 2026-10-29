@@ -73,7 +73,7 @@ fun SettingsScreen(
                 updateUser { it.copy(pokedexSize = v) }
             }
             ChoiceRow("Хранить в истории", UserSettings.HISTORY_LIMITS, user.historyLimit, { "$it" }) { v ->
-                updateUser { it.copy(historyLimit = v) }
+                onEvent(SettingsEvent.SetHistoryLimit(v))
             }
             ChoiceRow("Тема", ThemeMode.entries, user.themeMode, { it.label() }) { v ->
                 updateUser { it.copy(themeMode = v) }

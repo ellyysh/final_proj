@@ -7,7 +7,7 @@ sealed interface NameValidation {
     data class Invalid(val error: NameError) : NameValidation
 }
 
-/** Валидация названий пользовательских сущностей (коллекции, профили, пресеты). */
+
 object NameValidator {
     const val MAX_LENGTH = 40
 
@@ -25,6 +25,6 @@ object NameValidator {
 
 fun NameError.message(): String = when (this) {
     NameError.EMPTY -> "Название не может быть пустым"
-    NameError.TOO_LONG -> "Слишком длинное название (максимум ${NameValidator.MAX_LENGTH})"
+    NameError.TOO_LONG -> "Слишком длинное название"
     NameError.DUPLICATE -> "Такое название уже есть"
 }

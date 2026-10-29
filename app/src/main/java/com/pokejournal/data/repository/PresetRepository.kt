@@ -1,6 +1,7 @@
 package com.pokejournal.data.repository
 
-import com.pokejournal.data.local.dao.FilterPresetDao
+import androidx.room.withTransaction
+import com.pokejournal.data.local.AppDatabase
 import com.pokejournal.data.local.entity.FilterPresetEntity
 import com.pokejournal.domain.logic.NameValidation
 import com.pokejournal.domain.logic.NameValidator
@@ -13,7 +14,6 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Сохранённые пресеты поиска: запрос + тип + статус. */
 interface PresetRepository {
     fun observePresets(profileId: Long): Flow<List<FilterPreset>>
     suspend fun savePreset(profileId: Long, name: String, query: String, filter: ListFilter): CreateResult
@@ -22,9 +22,11 @@ interface PresetRepository {
 
 @Singleton
 class RoomPresetRepository @Inject constructor(
-    private val dao: FilterPresetDao,
+    private val db: AppDatabase,
     private val time: TimeProvider,
 ) : PresetRepository {
+
+    private val dao = db.filterPresetDao()
 
     override fun observePresets(profileId: Long): Flow<List<FilterPreset>> =
         dao.observe(profileId).map { rows ->
@@ -42,6 +44,9 @@ class RoomPresetRepository @Inject constructor(
         }
 
     override suspend fun savePreset(profileId: Long, name: String, query: String, filter: ListFilter): CreateResult =
+        db.withTransaction { insertValidated(profileId, name, query, filter) }
+
+    private suspend fun insertValidated(profileId: Long, name: String, query: String, filter: ListFilter): CreateResult =
         when (val validation = NameValidator.validate(name, dao.namesFor(profileId), maxLength = 24)) {
             is NameValidation.Invalid -> CreateResult.Rejected(validation.error)
             is NameValidation.Valid -> CreateResult.Created(

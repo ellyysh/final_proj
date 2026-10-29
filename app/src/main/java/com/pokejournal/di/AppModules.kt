@@ -7,6 +7,8 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.room.Room
 import com.pokejournal.BuildConfig
+import com.pokejournal.data.images.ArtworkStore
+import com.pokejournal.data.images.FileArtworkStore
 import com.pokejournal.data.local.AppDatabase
 import com.pokejournal.data.local.dao.CollectionDao
 import com.pokejournal.data.local.dao.FilterPresetDao
@@ -106,6 +108,7 @@ object StorageModule {
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, AppDatabase.NAME)
             .addCallback(AppDatabase.seedCallback)
+            .addMigrations(*AppDatabase.ALL_MIGRATIONS)
             .build()
 
     @Provides fun provideProfileDao(db: AppDatabase): ProfileDao = db.profileDao()
@@ -159,4 +162,6 @@ abstract class BindingsModule {
     @Binds abstract fun bindNetworkMonitor(impl: ConnectivityNetworkMonitor): NetworkMonitor
 
     @Binds abstract fun bindSyncScheduler(impl: WorkManagerSyncScheduler): SyncScheduler
+
+    @Binds abstract fun bindArtworkStore(impl: FileArtworkStore): ArtworkStore
 }

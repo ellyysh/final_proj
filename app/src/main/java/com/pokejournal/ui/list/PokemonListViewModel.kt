@@ -15,6 +15,7 @@ import com.pokejournal.domain.logic.toUserMessage
 import com.pokejournal.domain.model.FilterPreset
 import com.pokejournal.domain.model.ListFilter
 import com.pokejournal.domain.model.PokemonListItem
+import com.pokejournal.ui.components.CreateDialogState
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -95,7 +96,8 @@ class PokemonListViewModel @Inject constructor(
                 val ttl = settingsRepository.appSettings.first().cacheTtlMillis
                 when (val result = pokemonRepository.refreshCatalog(limit, ttl, request.force)) {
                     is RefreshResult.Failed -> emit(RefreshState.Failed(result.error.toUserMessage()))
-                    RefreshResult.Updated, RefreshResult.UpToDate -> emit(RefreshState.Idle)
+                    // Partial для каталога не возвращается, но when должен быть исчерпывающим.
+                    RefreshResult.Updated, RefreshResult.UpToDate, is RefreshResult.Partial -> emit(RefreshState.Idle)
                 }
             }
         }
@@ -124,6 +126,9 @@ class PokemonListViewModel @Inject constructor(
 
     private val presets: Flow<List<FilterPreset>> = profileId.flatMapLatest { presetRepository.observePresets(it) }
 
+    /** Диалог сохранения пресета: закрывается только после успешной валидации имени. */
+    private val savePresetDialog = MutableStateFlow(CreateDialogState())
+
     val uiState: StateFlow<PokemonListUiState> = combine(
         combine(
             listData,
@@ -136,7 +141,10 @@ class PokemonListViewModel @Inject constructor(
         },
         queryInput,
         filter,
-    ) { state, query, currentFilter -> state.copy(query = query, filter = currentFilter) }
+        savePresetDialog,
+    ) { state, query, currentFilter, dialog ->
+        state.copy(query = query, filter = currentFilter, savePresetDialog = dialog)
+    }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), PokemonListUiState())
 
     fun onEvent(event: PokemonListEvent) {
@@ -152,7 +160,13 @@ class PokemonListViewModel @Inject constructor(
             is PokemonListEvent.TogglePinned -> viewModelScope.launch {
                 journalRepository.setPinned(profileId.first(), event.pokemonId, event.pinned)
             }
-            is PokemonListEvent.SavePreset -> viewModelScope.launch { savePreset(event.name) }
+            PokemonListEvent.OpenSavePresetDialog -> savePresetDialog.value = CreateDialogState(visible = true)
+            PokemonListEvent.DismissSavePresetDialog -> savePresetDialog.value = CreateDialogState()
+            is PokemonListEvent.SavePreset -> {
+                if (savePresetDialog.value.submitting) return // защита от двойного нажатия
+                savePresetDialog.update { it.copy(submitting = true) }
+                viewModelScope.launch { savePreset(event.name) }
+            }
             is PokemonListEvent.ApplyPreset -> {
                 queryInput.value = event.preset.query
                 filter.value = event.preset.filter
@@ -164,12 +178,16 @@ class PokemonListViewModel @Inject constructor(
     }
 
     private suspend fun savePreset(name: String) {
-        val result = presetRepository.savePreset(profileId.first(), name, queryInput.value, filter.value)
-        val message = when (result) {
-            is CreateResult.Created -> "Фильтр «${name.trim()}» сохранён"
-            is CreateResult.Rejected -> result.error.message()
+        when (val result = presetRepository.savePreset(profileId.first(), name, queryInput.value, filter.value)) {
+            is CreateResult.Created -> {
+                savePresetDialog.value = CreateDialogState()
+                messageChannel.send("Фильтр «${name.trim()}» сохранён")
+            }
+            // Ошибка показывается в диалоге, он не закрывается и название не теряется.
+            is CreateResult.Rejected -> savePresetDialog.update { current ->
+                if (current.visible) CreateDialogState(visible = true, error = result.error.message()) else current
+            }
         }
-        messageChannel.send(message)
     }
 
     private data class RefreshRequest(val force: Boolean)

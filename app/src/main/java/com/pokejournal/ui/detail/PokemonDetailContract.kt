@@ -3,6 +3,7 @@ package com.pokejournal.ui.detail
 import com.pokejournal.domain.model.CatchStatus
 import com.pokejournal.domain.model.PokemonDetail
 import com.pokejournal.domain.model.PokemonUserState
+import com.pokejournal.ui.components.CreateDialogState
 
 sealed interface DetailContent {
     data object Loading : DetailContent
@@ -22,6 +23,7 @@ data class PokemonDetailUiState(
     val userState: PokemonUserState = PokemonUserState(0),
     val note: String = "",
     val collections: List<CollectionChoice> = emptyList(),
+    val createCollectionDialog: CreateDialogState = CreateDialogState(),
 )
 
 sealed interface PokemonDetailEvent {
@@ -32,5 +34,7 @@ sealed interface PokemonDetailEvent {
     data object ToggleHidden : PokemonDetailEvent
     data class SaveNote(val text: String) : PokemonDetailEvent
     data class ToggleCollection(val collectionId: Long, val selected: Boolean) : PokemonDetailEvent
+    data object OpenCreateCollectionDialog : PokemonDetailEvent
+    data object DismissCreateCollectionDialog : PokemonDetailEvent
     data class CreateCollectionWithPokemon(val name: String) : PokemonDetailEvent
 }

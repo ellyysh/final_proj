@@ -1,5 +1,6 @@
 package com.pokejournal.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.Index
@@ -37,6 +38,13 @@ data class PokemonDetailEntity(
     val flavorText: String?,
     val abilities: String,
     val fetchedAt: Long,
+    /**
+     * false — основная карточка сохранена, но описание вида (species) не загрузилось
+     * из-за временной ошибки. Такая запись считается устаревшей и перезагружается
+     * при следующей возможности, не дожидаясь TTL. Добавлено в версии БД 2.
+     */
+    @ColumnInfo(defaultValue = "1")
+    val speciesLoaded: Boolean = true,
 )
 
 @Entity(tableName = "pokemon_stats", primaryKeys = ["pokemonId", "statName"])

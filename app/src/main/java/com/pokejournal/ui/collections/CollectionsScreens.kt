@@ -118,6 +118,7 @@ fun CollectionsScreen(
             secondLabel = "Описание (необязательно)",
             confirmLabel = "Создать",
             error = state.dialog.error,
+            confirmEnabled = !state.dialog.submitting,
             onConfirm = { name, description -> onEvent(CollectionsEvent.Create(name, description)) },
             onDismiss = { onEvent(CollectionsEvent.DismissDialog) },
         )

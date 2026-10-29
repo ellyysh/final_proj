@@ -4,7 +4,7 @@ import retrofit2.http.GET
 import retrofit2.http.Path
 import retrofit2.http.Query
 
-/** PokeAPI v2 — открытое API без ключа. */
+
 interface PokeApi {
 
     @GET("pokemon")

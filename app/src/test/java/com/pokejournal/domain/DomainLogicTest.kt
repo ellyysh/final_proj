@@ -11,6 +11,7 @@ import com.pokejournal.domain.logic.StatsCalculator
 import com.pokejournal.domain.logic.toUserMessage
 import com.pokejournal.domain.model.CatchStatus
 import com.pokejournal.domain.model.ListFilter
+import com.pokejournal.domain.model.PokemonImages
 import com.pokejournal.domain.model.PokemonUserState
 import com.pokejournal.domain.model.SortOrder
 import com.pokejournal.domain.model.StatusFilter
@@ -44,6 +45,14 @@ class CachePolicyTest {
     fun `catalog needs refresh when user extends pokedex even if fresh`() {
         assertTrue(CachePolicy.needsCatalogRefresh(1_000, cachedLimit = 151, requiredLimit = 251, now = 1_001, ttlMillis = hour))
         assertFalse(CachePolicy.needsCatalogRefresh(1_000, cachedLimit = 251, requiredLimit = 151, now = 1_001, ttlMillis = hour))
+    }
+
+    @Test
+    fun `incomplete detail is refreshed even inside ttl`() {
+        assertTrue(CachePolicy.needsDetailRefresh(fetchedAt = 1_000, complete = false, now = 1_001, ttlMillis = hour))
+        assertFalse(CachePolicy.needsDetailRefresh(fetchedAt = 1_000, complete = true, now = 1_001, ttlMillis = hour))
+        assertTrue(CachePolicy.needsDetailRefresh(fetchedAt = 1_000, complete = true, now = 1_000 + hour, ttlMillis = hour))
+        assertTrue(CachePolicy.needsDetailRefresh(fetchedAt = null, complete = false, now = 0, ttlMillis = hour))
     }
 }
 
@@ -149,6 +158,13 @@ class MappersTest {
     fun `id is parsed from resource url`() {
         assertEquals(25, DtoMappers.idFromUrl("https://pokeapi.co/api/v2/pokemon/25/"))
         assertEquals(null, DtoMappers.idFromUrl("https://pokeapi.co/api/v2/pokemon/"))
+    }
+
+    @Test
+    fun `artwork url round trips to pokemon id and foreign urls are ignored`() {
+        assertEquals(25, PokemonImages.idFromArtworkUrl(PokemonImages.artworkUrl(25)))
+        assertEquals(null, PokemonImages.idFromArtworkUrl("https://example.com/25.png"))
+        assertEquals(null, PokemonImages.idFromArtworkUrl(PokemonImages.artworkUrl(25).replace("25", "abc")))
     }
 
     @Test

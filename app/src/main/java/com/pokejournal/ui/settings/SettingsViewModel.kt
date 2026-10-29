@@ -2,6 +2,7 @@ package com.pokejournal.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pokejournal.data.repository.HistoryRepository
 import com.pokejournal.data.repository.PokemonRepository
 import com.pokejournal.data.settings.SettingsRepository
 import com.pokejournal.domain.model.AppSettings
@@ -30,6 +31,9 @@ data class SettingsUiState(
 sealed interface SettingsEvent {
     data class UpdateUser(val transform: (UserSettings) -> UserSettings) : SettingsEvent
     data class UpdateApp(val transform: (AppSettings) -> AppSettings) : SettingsEvent
+
+    /** Отдельное событие: смена лимита не только пишет настройку, но и чистит историю. */
+    data class SetHistoryLimit(val limit: Int) : SettingsEvent
     data object SyncNow : SettingsEvent
 }
 
@@ -37,6 +41,7 @@ sealed interface SettingsEvent {
 class SettingsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val syncScheduler: SyncScheduler,
+    private val historyRepository: HistoryRepository,
     pokemonRepository: PokemonRepository,
 ) : ViewModel() {
 
@@ -58,6 +63,13 @@ class SettingsViewModel @Inject constructor(
             // Перепланирование WorkManager произойдёт реактивно в SyncInitializer.
             is SettingsEvent.UpdateApp -> viewModelScope.launch {
                 settingsRepository.updateAppSettings(event.transform)
+            }
+            // Раньше лимит применялся только в record(): после 100 → 20 лишние 80 записей
+            // жили до следующего просмотра карточки. Теперь история обрезается сразу.
+            is SettingsEvent.SetHistoryLimit -> viewModelScope.launch {
+                val profileId = settingsRepository.activeProfileId.first()
+                settingsRepository.updateUserSettings(profileId) { it.copy(historyLimit = event.limit) }
+                historyRepository.applyLimit(profileId, event.limit)
             }
             SettingsEvent.SyncNow -> syncScheduler.syncNow()
         }

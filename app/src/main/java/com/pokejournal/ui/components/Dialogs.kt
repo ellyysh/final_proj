@@ -28,6 +28,7 @@ fun TextInputDialog(
     secondLabel: String? = null,
     error: String? = null,
     singleLine: Boolean = true,
+    confirmEnabled: Boolean = true,
 ) {
     var text by rememberSaveable { mutableStateOf(initial) }
     var second by rememberSaveable { mutableStateOf("") }
@@ -61,7 +62,9 @@ fun TextInputDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onConfirm(text, second) }) { Text(confirmLabel) } },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text, second) }, enabled = confirmEnabled) { Text(confirmLabel) }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

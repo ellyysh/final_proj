@@ -18,7 +18,6 @@ data class JournalStats(
     val completionPercent: Int get() = if (total == 0) 0 else caught * 100 / total
 }
 
-/** Считает прогресс личного Pokédex в рамках выбранного размера. */
 object StatsCalculator {
 
     fun calculate(
