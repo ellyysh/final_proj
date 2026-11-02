@@ -7,7 +7,6 @@ interface ImportantPokemonSource {
 
     suspend fun importantIds(): List<Int>
 
-
     suspend fun collectionIds(): List<Int>
 }
 

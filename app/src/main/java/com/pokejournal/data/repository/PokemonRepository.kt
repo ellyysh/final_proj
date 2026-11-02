@@ -17,6 +17,7 @@ import com.pokejournal.data.remote.PokemonDto
 import com.pokejournal.data.remote.SpeciesDto
 import com.pokejournal.domain.logic.CachePolicy
 import com.pokejournal.domain.logic.ProgressCounter
+import com.pokejournal.domain.logic.SpeciesUnavailableException
 import com.pokejournal.domain.logic.isRetryable
 import com.pokejournal.domain.logic.mapConcurrently
 import com.pokejournal.domain.logic.TimeProvider
@@ -25,6 +26,7 @@ import com.pokejournal.domain.model.PokemonImages
 import com.pokejournal.domain.model.PokemonStat
 import com.pokejournal.domain.model.PokemonSummary
 import com.pokejournal.domain.model.PokemonTypes
+import com.pokejournal.domain.model.SpeciesState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -35,7 +37,6 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 sealed interface RefreshResult {
-
     data object Updated : RefreshResult
 
     data object UpToDate : RefreshResult
@@ -51,7 +52,6 @@ val RefreshResult.errorOrNull: Throwable?
         is RefreshResult.Partial -> error
         RefreshResult.Updated, RefreshResult.UpToDate -> null
     }
-
 
 data class PrefetchReport(
     val total: Int,
@@ -75,7 +75,6 @@ data class PrefetchReport(
     }
 }
 
-
 interface PokemonRepository {
     fun observeCatalog(): Flow<List<PokemonSummary>>
     fun observeDetail(id: Int): Flow<PokemonDetail?>
@@ -96,7 +95,6 @@ class OfflineFirstPokemonRepository @Inject constructor(
     private val db: AppDatabase,
     private val time: TimeProvider,
 ) : PokemonRepository {
-
     private val pokemonDao = db.pokemonDao()
     private val metaDao = db.cacheMetaDao()
 
@@ -152,13 +150,20 @@ class OfflineFirstPokemonRepository @Inject constructor(
 
     override suspend fun refreshDetail(id: Int, ttlMillis: Long, force: Boolean): RefreshResult {
         val existing = pokemonDao.getDetail(id)
+        val existingState = SpeciesState.parse(existing?.speciesState)
         val needsRefresh = CachePolicy.needsDetailRefresh(
             fetchedAt = existing?.fetchedAt,
-            complete = existing?.speciesLoaded ?: false,
+            speciesState = existingState,
             now = time.now(),
             ttlMillis = ttlMillis,
         )
-        if (!force && !needsRefresh) return RefreshResult.UpToDate
+        if (!force && !needsRefresh) {
+            return if (existingState == SpeciesState.MISSING) {
+                RefreshResult.Partial(SpeciesUnavailableException(id))
+            } else {
+                RefreshResult.UpToDate
+            }
+        }
 
         return try {
             val (pokemon, species) = coroutineScope {
@@ -175,9 +180,13 @@ class OfflineFirstPokemonRepository @Inject constructor(
                 pokemonCall.await() to speciesCall.await()
             }
             val speciesError = species.exceptionOrNull()
-            val speciesLoaded = speciesError == null || !speciesError.isRetryable()
-            savePokemonDetail(pokemon, species.getOrNull(), speciesLoaded, previous = existing)
-            if (speciesLoaded) RefreshResult.Updated else RefreshResult.Partial(speciesError!!)
+            val speciesState = when {
+                speciesError == null -> SpeciesState.LOADED
+                speciesError.isRetryable() -> SpeciesState.PENDING
+                else -> SpeciesState.MISSING
+            }
+            savePokemonDetail(pokemon, species.getOrNull(), speciesState, previous = existing)
+            if (speciesError == null) RefreshResult.Updated else RefreshResult.Partial(speciesError)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -201,7 +210,7 @@ class OfflineFirstPokemonRepository @Inject constructor(
     private suspend fun savePokemonDetail(
         dto: PokemonDto,
         species: SpeciesDto?,
-        speciesLoaded: Boolean,
+        speciesState: SpeciesState,
         previous: PokemonDetailEntity?,
     ) {
         val now = time.now()
@@ -219,7 +228,7 @@ class OfflineFirstPokemonRepository @Inject constructor(
                     flavorText = if (species != null) species.englishFlavorText() else previous?.flavorText,
                     abilities = dto.abilities.joinToString(ABILITY_SEPARATOR) { it.ability.name },
                     fetchedAt = now,
-                    speciesLoaded = speciesLoaded,
+                    speciesState = speciesState.name,
                 ),
             )
             pokemonDao.deleteStats(dto.id)
@@ -270,5 +279,5 @@ internal fun PokemonFull.toDetail() = PokemonDetail(
     abilities = detail?.abilities?.split(",")?.filter { it.isNotBlank() }.orEmpty(),
     stats = stats.sortedBy { it.position }.map { PokemonStat(it.statName, it.value) },
     fetchedAt = detail?.fetchedAt,
-    speciesLoaded = detail?.speciesLoaded ?: false,
+    speciesState = SpeciesState.parse(detail?.speciesState),
 )

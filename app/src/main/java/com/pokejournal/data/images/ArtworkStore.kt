@@ -1,11 +1,16 @@
 package com.pokejournal.data.images
 
 import android.content.Context
+import com.pokejournal.data.local.AppDatabase
+import com.pokejournal.data.local.entity.OfflineArtworkEntity
 import com.pokejournal.domain.logic.HttpStatusException
+import com.pokejournal.domain.logic.TimeProvider
 import com.pokejournal.domain.model.PokemonImages
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -13,7 +18,6 @@ import java.io.File
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
-
 
 interface ArtworkStore {
     fun localFile(pokemonId: Int): File?
@@ -27,17 +31,26 @@ interface ArtworkStore {
 class FileArtworkStore @Inject constructor(
     @ApplicationContext context: Context,
     private val client: OkHttpClient,
+    db: AppDatabase,
+    private val time: TimeProvider,
 ) : ArtworkStore {
-
     private val dir = File(context.filesDir, DIR_NAME)
+    private val dao = db.offlineArtworkDao()
+    private val lock = Mutex()
 
     override fun localFile(pokemonId: Int): File? =
         fileFor(pokemonId).takeIf { it.isFile && it.length() > 0 }
 
     override suspend fun ensure(pokemonId: Int): Throwable? = withContext(Dispatchers.IO) {
-        if (localFile(pokemonId) != null) return@withContext null
         try {
-            download(pokemonId)
+            if (localFile(pokemonId) == null) {
+                dao.delete(pokemonId)
+                download(pokemonId)
+            }
+            lock.withLock {
+                if (localFile(pokemonId) == null) throw IOException("Artwork $pokemonId was removed")
+                dao.insert(OfflineArtworkEntity(pokemonId, time.now()))
+            }
             null
         } catch (e: CancellationException) {
             throw e
@@ -50,12 +63,16 @@ class FileArtworkStore @Inject constructor(
         val startedAt = System.currentTimeMillis()
         val keep = loadKeepIds().toSet()
         withContext(Dispatchers.IO) {
-            dir.listFiles().orEmpty()
-                .filter { file ->
-                    val id = file.name.removeSuffix(EXTENSION).toIntOrNull()
-                    (id == null || id !in keep) && file.lastModified() < startedAt
-                }
-                .forEach { it.delete() }
+            lock.withLock {
+                dir.listFiles().orEmpty()
+                    .filter { file ->
+                        val id = file.name.removeSuffix(EXTENSION).toIntOrNull()
+                        (id == null || id !in keep) && file.lastModified() < startedAt
+                    }
+                    .forEach { it.delete() }
+                val withoutFile = dao.ids().filter { localFile(it) == null }
+                if (withoutFile.isNotEmpty()) dao.deleteAll(withoutFile)
+            }
         }
     }
 

@@ -45,7 +45,6 @@ sealed interface ProfileEvent {
     data class Delete(val profileId: Long) : ProfileEvent
 }
 
-/** Персональный раздел: активный профиль, прогресс личного Pokédex, заметки, управление профилями. */
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
@@ -65,7 +64,6 @@ class ProfileViewModel @Inject constructor(
         ) { states, notes, settings -> Triple(states, notes, settings) }
     }
 
-    /** Диалог создания профиля: закрывается только после успешной валидации. */
     private val createDialog = MutableStateFlow(CreateDialogState())
 
     val uiState: StateFlow<ProfileUiState> = combine(
@@ -91,7 +89,7 @@ class ProfileViewModel @Inject constructor(
             ProfileEvent.OpenCreateDialog -> createDialog.value = CreateDialogState(visible = true)
             ProfileEvent.DismissCreateDialog -> createDialog.value = CreateDialogState()
             is ProfileEvent.Create -> {
-                if (createDialog.value.submitting) return // защита от двойного нажатия
+                if (createDialog.value.submitting) return
                 createDialog.update { it.copy(submitting = true) }
                 createProfile(event)
             }
@@ -112,7 +110,6 @@ class ProfileViewModel @Inject constructor(
                     settingsRepository.setActiveProfile(result.id)
                     messageChannel.send("Профиль «${event.name.trim()}» создан и выбран")
                 }
-                // Ошибку показываем в самом диалоге: он остаётся открытым, имя и аватар не теряются.
                 is CreateResult.Rejected -> createDialog.update { current ->
                     if (current.visible) CreateDialogState(visible = true, error = result.error.message()) else current
                 }

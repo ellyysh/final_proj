@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.pokejournal.data.local.AppDatabase
+import com.pokejournal.data.local.entity.OfflineArtworkEntity
 import com.pokejournal.data.local.entity.PokemonDetailEntity
 import com.pokejournal.data.local.entity.PokemonEntity
 import com.pokejournal.data.local.entity.ProfileEntity
@@ -19,6 +20,7 @@ import com.pokejournal.domain.logic.NameError
 import com.pokejournal.domain.model.CatchStatus
 import com.pokejournal.domain.model.ListFilter
 import com.pokejournal.domain.model.PokemonImages
+import com.pokejournal.domain.model.SpeciesState
 import com.pokejournal.domain.model.StatusFilter
 import com.pokejournal.testing.FakeSettingsRepository
 import com.pokejournal.testing.FakeTime
@@ -30,6 +32,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -37,11 +40,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class UserDataIntegrationTest {
-
     private lateinit var db: AppDatabase
     private val time = FakeTime()
     private val settings = FakeSettingsRepository(activeId = 1L)
@@ -85,12 +86,38 @@ class UserDataIntegrationTest {
         collections.setMembership(id, 1, true)
         collections.setMembership(id, 4, true)
         db.pokemonDao().upsertDetail(PokemonDetailEntity(4, 6, 85, 62, null, null, "", fetchedAt = 1))
+        assertEquals(0, collections.observeCollection(id).first()!!.offlineCount)
+        db.offlineArtworkDao().insert(OfflineArtworkEntity(4, savedAt = 1))
 
         val summary = collections.observeCollection(id).first()!!
         assertEquals(2, summary.itemCount)
         assertEquals(1, summary.offlineCount)
         assertEquals(listOf(4, 1), collections.observeMembers(id).first().map { it.pokemonId })
         assertEquals(setOf(id), collections.observeCollectionIdsFor(1L, 1).first())
+    }
+
+    @Test
+    fun `offline count requires card with final description and saved image`() = runTest {
+        val id = (collections.createCollection(1L, "Trip", "") as CreateResult.Created).id
+        listOf(1, 4, 7).forEach { collections.setMembership(id, it, true) }
+        listOf(1, 4, 7).forEach { db.offlineArtworkDao().insert(OfflineArtworkEntity(it, savedAt = 1)) }
+        db.pokemonDao().upsertDetail(PokemonDetailEntity(1, 7, 69, 64, "Seed", "Text", "", fetchedAt = 1))
+        db.pokemonDao().upsertDetail(
+            PokemonDetailEntity(4, 6, 85, 62, null, null, "", fetchedAt = 1, speciesState = SpeciesState.PENDING.name),
+        )
+        db.pokemonDao().upsertDetail(
+            PokemonDetailEntity(7, 5, 90, 63, null, null, "", fetchedAt = 1, speciesState = SpeciesState.MISSING.name),
+        )
+
+        val summary = collections.observeCollection(id).first()!!
+        assertEquals(2, summary.offlineCount)
+        assertFalse(summary.fullyOffline)
+        val members = collections.observeMembers(id).first().associate { it.pokemonId to it.availableOffline }
+        assertEquals(mapOf(1 to true, 4 to false, 7 to true), members)
+
+        db.offlineArtworkDao().delete(1)
+        assertEquals(1, collections.observeCollection(id).first()!!.offlineCount)
+        assertEquals(1, collections.observeCollections(1L).first().single().offlineCount)
     }
 
     @Test
@@ -115,7 +142,6 @@ class UserDataIntegrationTest {
 
         journal.setStatus(1L, 7, CatchStatus.NONE)
         assertTrue(journal.observeStates(1L).first().isEmpty())
-
 
         journal.setHidden(2L, 7, true)
         val hidden = journal.observeState(2L, 7).first()
@@ -225,7 +251,7 @@ class UserDataIntegrationTest {
         history.applyLimit(1L, 20)
 
         val left = history.observeHistory(1L).first().map { it.pokemonId }
-        assertEquals((30 downTo 11).toList(), left) // остались 20 самых свежих
-        assertEquals(1, history.observeHistory(2L).first().size) // другой профиль не тронут
+        assertEquals((30 downTo 11).toList(), left)
+        assertEquals(1, history.observeHistory(2L).first().size)
     }
 }

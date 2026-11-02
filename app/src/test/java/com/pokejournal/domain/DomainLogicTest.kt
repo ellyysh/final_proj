@@ -10,10 +10,12 @@ import com.pokejournal.domain.logic.RelativeTime
 import com.pokejournal.domain.logic.StatsCalculator
 import com.pokejournal.domain.logic.toUserMessage
 import com.pokejournal.domain.model.CatchStatus
+import com.pokejournal.domain.model.CollectionSummary
 import com.pokejournal.domain.model.ListFilter
 import com.pokejournal.domain.model.PokemonImages
 import com.pokejournal.domain.model.PokemonUserState
 import com.pokejournal.domain.model.SortOrder
+import com.pokejournal.domain.model.SpeciesState
 import com.pokejournal.domain.model.StatusFilter
 import com.pokejournal.testing.TestData
 import org.junit.Assert.assertEquals
@@ -48,11 +50,42 @@ class CachePolicyTest {
     }
 
     @Test
-    fun `incomplete detail is refreshed even inside ttl`() {
-        assertTrue(CachePolicy.needsDetailRefresh(fetchedAt = 1_000, complete = false, now = 1_001, ttlMillis = hour))
-        assertFalse(CachePolicy.needsDetailRefresh(fetchedAt = 1_000, complete = true, now = 1_001, ttlMillis = hour))
-        assertTrue(CachePolicy.needsDetailRefresh(fetchedAt = 1_000, complete = true, now = 1_000 + hour, ttlMillis = hour))
-        assertTrue(CachePolicy.needsDetailRefresh(fetchedAt = null, complete = false, now = 0, ttlMillis = hour))
+    fun `pending description is refreshed even inside ttl`() {
+        assertTrue(CachePolicy.needsDetailRefresh(1_000, SpeciesState.PENDING, now = 1_001, ttlMillis = hour))
+        assertFalse(CachePolicy.needsDetailRefresh(1_000, SpeciesState.LOADED, now = 1_001, ttlMillis = hour))
+        assertTrue(CachePolicy.needsDetailRefresh(1_000, SpeciesState.LOADED, now = 1_000 + hour, ttlMillis = hour))
+        assertTrue(CachePolicy.needsDetailRefresh(null, SpeciesState.PENDING, now = 0, ttlMillis = hour))
+    }
+
+    @Test
+    fun `missing description is not refetched before ttl but is after it`() {
+        assertFalse(CachePolicy.needsDetailRefresh(1_000, SpeciesState.MISSING, now = 1_001, ttlMillis = hour))
+        assertTrue(CachePolicy.needsDetailRefresh(1_000, SpeciesState.MISSING, now = 1_000 + hour, ttlMillis = hour))
+    }
+
+    @Test
+    fun `detail is complete only with loaded description`() {
+        val detail = TestData.detail(1)
+        assertTrue(detail.copy(speciesState = SpeciesState.LOADED).isComplete)
+        assertFalse(detail.copy(speciesState = SpeciesState.PENDING).isComplete)
+        assertFalse(detail.copy(speciesState = SpeciesState.MISSING).isComplete)
+        assertTrue(detail.copy(speciesState = SpeciesState.MISSING).hasDetail)
+        assertFalse(detail.copy(fetchedAt = null).isComplete)
+    }
+
+    @Test
+    fun `unknown stored species state is treated as pending`() {
+        assertEquals(SpeciesState.MISSING, SpeciesState.parse("MISSING"))
+        assertEquals(SpeciesState.PENDING, SpeciesState.parse(null))
+        assertEquals(SpeciesState.PENDING, SpeciesState.parse("garbage"))
+    }
+
+    @Test
+    fun `collection is fully offline only when every member is ready`() {
+        val base = CollectionSummary(1, "Trip", "", itemCount = 3, offlineCount = 2, createdAt = 0)
+        assertFalse(base.fullyOffline)
+        assertTrue(base.copy(offlineCount = 3).fullyOffline)
+        assertFalse(base.copy(itemCount = 0, offlineCount = 0).fullyOffline)
     }
 }
 
@@ -132,7 +165,7 @@ class StatsCalculatorTest {
         val catalog = TestData.catalog + TestData.chikorita
         val states = mapOf(
             1 to PokemonUserState(1, status = CatchStatus.CAUGHT),
-            152 to PokemonUserState(152, status = CatchStatus.CAUGHT), // вне размера 151
+            152 to PokemonUserState(152, status = CatchStatus.CAUGHT),
             4 to PokemonUserState(4, status = CatchStatus.WANTED, pinned = true),
         )
         val stats = StatsCalculator.calculate(catalog, states, pokedexSize = 151)

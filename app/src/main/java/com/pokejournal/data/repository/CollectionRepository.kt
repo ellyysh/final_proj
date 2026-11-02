@@ -37,7 +37,6 @@ class RoomCollectionRepository @Inject constructor(
     private val db: AppDatabase,
     private val time: TimeProvider,
 ) : CollectionRepository {
-
     private val dao = db.collectionDao()
 
     override fun observeCollections(profileId: Long): Flow<List<CollectionSummary>> =
@@ -53,7 +52,7 @@ class RoomCollectionRepository @Inject constructor(
                     pokemonId = it.pokemonId,
                     name = it.name,
                     imageUrl = it.imageUrl,
-                    availableOffline = it.detailFetchedAt != null,
+                    availableOffline = it.availableOffline,
                     addedAt = it.addedAt,
                 )
             }

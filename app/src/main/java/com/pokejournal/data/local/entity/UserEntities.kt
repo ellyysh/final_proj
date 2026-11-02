@@ -5,8 +5,6 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/* ---------- Пользовательские данные (разделены по локальным профилям) ---------- */
-
 @Entity(tableName = "profiles")
 data class ProfileEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -75,7 +73,6 @@ data class CollectionEntity(
     val createdAt: Long,
 )
 
-/** Связь many-to-many: коллекция <-> покемон. */
 @Entity(
     tableName = "collection_items",
     primaryKeys = ["collectionId", "pokemonId"],
@@ -135,8 +132,6 @@ data class FilterPresetEntity(
     val createdAt: Long,
 )
 
-/* ---------- Проекции для запросов с JOIN ---------- */
-
 data class CollectionSummaryRow(
     val id: Long,
     val name: String,
@@ -150,7 +145,7 @@ data class CollectionMemberRow(
     val pokemonId: Int,
     val name: String,
     val imageUrl: String,
-    val detailFetchedAt: Long?,
+    val availableOffline: Boolean,
     val addedAt: Long,
 )
 

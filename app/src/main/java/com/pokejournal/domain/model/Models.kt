@@ -1,6 +1,5 @@
 package com.pokejournal.domain.model
 
-
 data class PokemonSummary(
     val id: Int,
     val name: String,
@@ -9,7 +8,6 @@ data class PokemonSummary(
 )
 
 data class PokemonStat(val name: String, val value: Int)
-
 
 data class PokemonDetail(
     val id: Int,
@@ -24,9 +22,24 @@ data class PokemonDetail(
     val abilities: List<String>,
     val stats: List<PokemonStat>,
     val fetchedAt: Long?,
-    val speciesLoaded: Boolean = true,
+    val speciesState: SpeciesState = SpeciesState.LOADED,
 ) {
-    val isComplete: Boolean get() = fetchedAt != null
+    val hasDetail: Boolean get() = fetchedAt != null
+
+    val isComplete: Boolean get() = hasDetail && speciesState == SpeciesState.LOADED
+}
+
+enum class SpeciesState {
+    LOADED,
+    PENDING,
+    MISSING,
+    ;
+
+    val needsEarlyRefresh: Boolean get() = this == PENDING
+
+    companion object {
+        fun parse(value: String?): SpeciesState = entries.firstOrNull { it.name == value } ?: PENDING
+    }
 }
 
 enum class CatchStatus { NONE, SEEN, WANTED, CAUGHT }

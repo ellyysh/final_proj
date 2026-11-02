@@ -57,6 +57,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pokejournal.domain.logic.RelativeTime
 import com.pokejournal.domain.model.CatchStatus
 import com.pokejournal.domain.model.PokemonDetail
+import com.pokejournal.domain.model.SpeciesState
 import com.pokejournal.ui.components.ErrorState
 import com.pokejournal.ui.components.LoadingState
 import com.pokejournal.ui.components.OfflineBanner
@@ -155,7 +156,6 @@ fun PokemonDetailScreen(
             onDismiss = { editingNote = false },
         )
     }
-    // Закрывается ViewModel'ю после успешного создания; при ошибке остаётся открытым с сообщением.
     if (state.createCollectionDialog.visible) {
         TextInputDialog(
             title = "Новая коллекция",
@@ -234,6 +234,14 @@ private fun DetailBody(
                 pokemon.flavorText?.let {
                     Spacer(Modifier.height(12.dp))
                     Text(it, style = MaterialTheme.typography.bodyMedium, fontStyle = FontStyle.Italic)
+                }
+                speciesNotice(pokemon)?.let {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
                 if (pokemon.abilities.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
@@ -331,3 +339,11 @@ private fun InfoCell(label: String, value: String) {
 }
 
 private const val MAX_STAT = 200f
+
+internal fun speciesNotice(pokemon: PokemonDetail): String? = when (pokemon.speciesState) {
+    SpeciesState.LOADED -> null
+    SpeciesState.PENDING ->
+        if (pokemon.flavorText == null) "Описание ещё не загружено" else "Описание может быть устаревшим"
+    SpeciesState.MISSING ->
+        if (pokemon.flavorText == null) "Описание отсутствует в PokeAPI" else "Описание больше не доступно в PokeAPI"
+}

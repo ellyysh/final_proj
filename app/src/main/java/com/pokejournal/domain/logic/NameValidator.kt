@@ -7,7 +7,6 @@ sealed interface NameValidation {
     data class Invalid(val error: NameError) : NameValidation
 }
 
-
 object NameValidator {
     const val MAX_LENGTH = 40
 

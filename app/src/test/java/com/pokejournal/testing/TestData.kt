@@ -53,7 +53,6 @@ class FakeTime(var current: Long = 1_000_000L) : TimeProvider {
     }
 }
 
-
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainDispatcherRule(
     val dispatcher: TestDispatcher = StandardTestDispatcher(),

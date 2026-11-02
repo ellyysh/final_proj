@@ -6,6 +6,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.pokejournal.data.local.AppDatabase
 import com.pokejournal.data.repository.OfflineFirstPokemonRepository
 import com.pokejournal.data.repository.RefreshResult
+import com.pokejournal.domain.logic.SpeciesUnavailableException
+import com.pokejournal.domain.logic.isRetryable
+import com.pokejournal.domain.model.SpeciesState
 import com.pokejournal.testing.FakePokeApi
 import com.pokejournal.testing.FakeTime
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +17,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -23,11 +27,9 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
 class PokemonRepositoryIntegrationTest {
-
     private lateinit var db: AppDatabase
     private var api = FakePokeApi()
     private val time = FakeTime()
@@ -46,7 +48,6 @@ class PokemonRepositoryIntegrationTest {
     fun tearDown() {
         db.close()
     }
-
 
     private fun useLargeCatalog(size: Int) {
         api = FakePokeApi.withCatalog(size)
@@ -77,7 +78,6 @@ class PokemonRepositoryIntegrationTest {
         assertEquals(RefreshResult.Updated, repository.refreshCatalog(151, ttl, force = false))
         assertEquals(3, api.listCalls)
 
-
         assertEquals(RefreshResult.Updated, repository.refreshCatalog(251, ttl, force = false))
     }
 
@@ -104,10 +104,8 @@ class PokemonRepositoryIntegrationTest {
         assertEquals("A strange seed was planted on its back.", detail?.flavorText)
         assertEquals(listOf("hp", "attack"), detail?.stats?.map { it.name })
 
-
         repository.refreshCatalog(151, ttl, force = true)
         assertNotNull(repository.observeDetail(1).first()?.fetchedAt)
-
 
         api.offline = true
         assertTrue(repository.refreshDetail(1, ttl, force = true) is RefreshResult.Failed)
@@ -130,8 +128,6 @@ class PokemonRepositoryIntegrationTest {
         assertEquals(2, repository.observeOfflineDetailCount().first())
     }
 
-
-
     @Test
     fun `full 649 catalog is stored with types despite sqlite parameter limit`() = runTest {
         useLargeCatalog(649)
@@ -149,7 +145,6 @@ class PokemonRepositoryIntegrationTest {
         useLargeCatalog(649)
         repository.refreshCatalog(649, ttl, force = false)
         time.advance(ttl / 2)
-
 
         assertEquals(RefreshResult.Updated, repository.refreshCatalog(151, ttl, force = true))
         assertEquals(2, api.listCalls)
@@ -169,25 +164,24 @@ class PokemonRepositoryIntegrationTest {
         assertEquals(1, api.listCalls)
     }
 
-
-
     @Test
-    fun `species failure saves card as incomplete and it is refetched before ttl`() = runTest {
+    fun `species failure saves card as pending and it is refetched before ttl`() = runTest {
         api.failingSpeciesIds = setOf(1)
 
         val first = repository.refreshDetail(1, ttl, force = false)
 
         assertTrue(first is RefreshResult.Partial)
         val partial = repository.observeDetail(1).first()!!
-        assertNotNull(partial.fetchedAt) // карточка всё равно доступна офлайн
-        assertEquals(false, partial.speciesLoaded)
+        assertNotNull(partial.fetchedAt)
+        assertEquals(SpeciesState.PENDING, partial.speciesState)
+        assertFalse(partial.isComplete)
         assertNull(partial.genus)
-
 
         api.failingSpeciesIds = emptySet()
         assertEquals(RefreshResult.Updated, repository.refreshDetail(1, ttl, force = false))
         val full = repository.observeDetail(1).first()!!
-        assertEquals(true, full.speciesLoaded)
+        assertEquals(SpeciesState.LOADED, full.speciesState)
+        assertTrue(full.isComplete)
         assertEquals("Seed Pokémon", full.genus)
         assertEquals(RefreshResult.UpToDate, repository.refreshDetail(1, ttl, force = false))
     }
@@ -203,21 +197,55 @@ class PokemonRepositoryIntegrationTest {
     }
 
     @Test
-    fun `missing species (404) is permanent and does not cause endless refetch`() = runTest {
+    fun `missing species is not refetched before ttl but card is not considered complete`() = runTest {
         api.notFoundSpeciesIds = setOf(1)
 
-        assertEquals(RefreshResult.Updated, repository.refreshDetail(1, ttl, force = false))
-        assertEquals(RefreshResult.UpToDate, repository.refreshDetail(1, ttl, force = false))
+        val first = repository.refreshDetail(1, ttl, force = false)
+        val second = repository.refreshDetail(1, ttl, force = false)
+
+        assertTrue(first is RefreshResult.Partial)
+        assertFalse((first as RefreshResult.Partial).error.isRetryable())
+        assertTrue(second is RefreshResult.Partial)
+        assertTrue((second as RefreshResult.Partial).error is SpeciesUnavailableException)
         assertEquals(1, api.pokemonCalls)
+        val detail = repository.observeDetail(1).first()!!
+        assertNotNull(detail.fetchedAt)
+        assertEquals(SpeciesState.MISSING, detail.speciesState)
+        assertFalse(detail.isComplete)
+        assertNull(detail.flavorText)
     }
 
+    @Test
+    fun `missing species is requested again after ttl and recovers when it appears`() = runTest {
+        api.notFoundSpeciesIds = setOf(1)
+        repository.refreshDetail(1, ttl, force = false)
+
+        api.notFoundSpeciesIds = emptySet()
+        time.advance(ttl)
+
+        assertEquals(RefreshResult.Updated, repository.refreshDetail(1, ttl, force = false))
+        assertEquals(2, api.pokemonCalls)
+        val detail = repository.observeDetail(1).first()!!
+        assertEquals(SpeciesState.LOADED, detail.speciesState)
+        assertTrue(detail.isComplete)
+    }
+
+    @Test
+    fun `prefetch reports missing species as problem without retry`() = runTest {
+        api.notFoundSpeciesIds = setOf(4)
+
+        val report = repository.prefetchDetails(listOf(1, 4), ttl)
+
+        assertEquals(1, report.updated)
+        assertEquals(1, report.partial)
+        assertEquals(0, report.retryable)
+    }
 
     @Test
     fun `prefetch runs in parallel but never exceeds the concurrency limit`() = runTest {
         useLargeCatalog(151)
         api.pokemonDelayMillis = 100
         val progress = mutableListOf<Int>()
-
 
         val report = withContext(Dispatchers.Default) {
             repository.prefetchDetails((1..40).toList(), ttl) { done, total ->

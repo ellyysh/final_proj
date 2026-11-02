@@ -40,16 +40,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-/**
- * Экран каталога собирается из независимых потоков:
- *  - ввод поиска (debounce + distinctUntilChanged)
- *  - выбранный фильтр
- *  - каталог из Room (кэш PokeAPI)
- *  - личные состояния профиля из Room (статусы, закрепление, скрытие)
- *  - настройки профиля из DataStore (сортировка, размер Pokédex)
- *  - поток действий обновления (Refresh/Retry + смена размера Pokédex + восстановление сети)
- *  - состояние сети, время последней синхронизации, пресеты фильтров
- */
 @HiltViewModel
 class PokemonListViewModel @Inject constructor(
     private val pokemonRepository: PokemonRepository,
@@ -62,10 +52,8 @@ class PokemonListViewModel @Inject constructor(
     private val queryInput = MutableStateFlow("")
     private val filter = MutableStateFlow(ListFilter())
 
-    /** Поток пользовательских действий «обнови». SharedFlow — это именно поток событий. */
     private val refreshRequests = MutableSharedFlow<RefreshRequest>(extraBufferCapacity = 8)
 
-    /** One-time события (snackbar) отделены от состояния экрана. */
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages: Flow<String> = messageChannel.receiveAsFlow()
 
@@ -73,7 +61,6 @@ class PokemonListViewModel @Inject constructor(
     private val userSettings = profileId.flatMapLatest { settingsRepository.userSettings(it) }
     private val isOnline = networkMonitor.isOnline.distinctUntilChanged()
 
-    /** Пустой запрос применяется сразу, остальное — с задержкой 300 мс. */
     private val searchQuery: Flow<String> = queryInput
         .debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS }
         .map { PokemonListBuilder.normalizeQuery(it) }
@@ -81,13 +68,10 @@ class PokemonListViewModel @Inject constructor(
 
     private val refreshTriggers: Flow<RefreshRequest> = merge(
         refreshRequests,
-        // Пользователь расширил Pokédex в настройках — догружаем каталог.
         userSettings.map { it.pokedexSize }.distinctUntilChanged().drop(1).map { RefreshRequest(force = false) },
-        // Сеть появилась — пробуем актуализировать (TTL всё равно проверится).
         isOnline.drop(1).filter { it }.map { RefreshRequest(force = false) },
     ).onStart { emit(RefreshRequest(force = false)) }
 
-    /** flatMapLatest отменяет устаревший запрос, если пришёл новый (Retry во время загрузки). */
     private val refreshState: StateFlow<RefreshState> = refreshTriggers
         .flatMapLatest { request ->
             flow {
@@ -96,7 +80,6 @@ class PokemonListViewModel @Inject constructor(
                 val ttl = settingsRepository.appSettings.first().cacheTtlMillis
                 when (val result = pokemonRepository.refreshCatalog(limit, ttl, request.force)) {
                     is RefreshResult.Failed -> emit(RefreshState.Failed(result.error.toUserMessage()))
-                    // Partial для каталога не возвращается, но when должен быть исчерпывающим.
                     RefreshResult.Updated, RefreshResult.UpToDate, is RefreshResult.Partial -> emit(RefreshState.Idle)
                 }
             }
@@ -126,7 +109,6 @@ class PokemonListViewModel @Inject constructor(
 
     private val presets: Flow<List<FilterPreset>> = profileId.flatMapLatest { presetRepository.observePresets(it) }
 
-    /** Диалог сохранения пресета: закрывается только после успешной валидации имени. */
     private val savePresetDialog = MutableStateFlow(CreateDialogState())
 
     val uiState: StateFlow<PokemonListUiState> = combine(
@@ -163,7 +145,7 @@ class PokemonListViewModel @Inject constructor(
             PokemonListEvent.OpenSavePresetDialog -> savePresetDialog.value = CreateDialogState(visible = true)
             PokemonListEvent.DismissSavePresetDialog -> savePresetDialog.value = CreateDialogState()
             is PokemonListEvent.SavePreset -> {
-                if (savePresetDialog.value.submitting) return // защита от двойного нажатия
+                if (savePresetDialog.value.submitting) return
                 savePresetDialog.update { it.copy(submitting = true) }
                 viewModelScope.launch { savePreset(event.name) }
             }
@@ -183,7 +165,6 @@ class PokemonListViewModel @Inject constructor(
                 savePresetDialog.value = CreateDialogState()
                 messageChannel.send("Фильтр «${name.trim()}» сохранён")
             }
-            // Ошибка показывается в диалоге, он не закрывается и название не теряется.
             is CreateResult.Rejected -> savePresetDialog.update { current ->
                 if (current.visible) CreateDialogState(visible = true, error = result.error.message()) else current
             }

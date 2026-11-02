@@ -5,6 +5,7 @@ import com.pokejournal.data.repository.ImportantPokemonSource
 import com.pokejournal.data.repository.PrefetchReport
 import com.pokejournal.data.repository.RefreshResult
 import com.pokejournal.domain.logic.HttpStatusException
+import com.pokejournal.domain.logic.SpeciesUnavailableException
 import com.pokejournal.testing.FakeArtworkStore
 import com.pokejournal.testing.FakeCollectionRepository
 import com.pokejournal.testing.FakePokemonRepository
@@ -119,6 +120,36 @@ class OfflineSyncTest {
         assertEquals(0, report.ready)
         assertEquals(3, report.failed)
         assertEquals(2, report.retryable)
+    }
+
+    @Test
+    fun `member whose description is missing on server is ready offline but pending one is not`() = runTest {
+        val id = (collections.createCollection(1L, "Offline", "") as CreateResult.Created).id
+        listOf(1, 4, 7).forEach { collections.setMembership(id, it, true) }
+        pokemon.onRefreshDetail = { pid, _ ->
+            when (pid) {
+                1 -> RefreshResult.Partial(HttpStatusException(404))
+                4 -> RefreshResult.Partial(SpeciesUnavailableException(4))
+                else -> RefreshResult.Partial(IOException("species"))
+            }
+        }
+
+        val report = sync.downloadCollection(id)
+
+        assertEquals(OfflineDownloadReport(total = 3, ready = 2, retryable = 1), report)
+    }
+
+    @Test
+    fun `missing description is counted as sync failure without retry`() = runTest {
+        pokemon.onRefreshDetail = { pid, _ ->
+            if (pid == 1) RefreshResult.Partial(SpeciesUnavailableException(1)) else RefreshResult.UpToDate
+        }
+
+        val outcome = sync.syncCatalogAndPrefetch() as SyncOutcome.Success
+
+        assertEquals(1, outcome.failedCount)
+        assertFalse(outcome.hasRetryableFailures)
+        assertEquals(WorkDecision.FAILURE, SyncRetryPolicy.forSync(outcome, attempt = 0))
     }
 
     @Test

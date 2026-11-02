@@ -126,7 +126,6 @@ private fun MessageState(
     }
 }
 
-/** Баннер офлайн-режима / ошибки фонового обновления поверх закэшированных данных. */
 @Composable
 fun OfflineBanner(
     text: String,

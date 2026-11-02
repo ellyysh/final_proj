@@ -6,14 +6,12 @@ import com.pokejournal.data.repository.ImportantPokemonSource
 import com.pokejournal.data.repository.PokemonRepository
 import com.pokejournal.data.repository.PrefetchReport
 import com.pokejournal.data.repository.RefreshResult
-import com.pokejournal.data.repository.errorOrNull
 import com.pokejournal.data.settings.SettingsRepository
 import com.pokejournal.domain.logic.ProgressCounter
 import com.pokejournal.domain.logic.isRetryable
 import com.pokejournal.domain.logic.mapConcurrently
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
-
 
 data class ArtworkReport(val total: Int, val failed: Int, val retryable: Int) {
     companion object {
@@ -41,7 +39,6 @@ sealed interface SyncOutcome {
     data class Failure(val error: Throwable) : SyncOutcome
 }
 
-
 data class OfflineDownloadReport(val total: Int, val ready: Int, val retryable: Int) {
     val failed: Int get() = total - ready
 }
@@ -53,7 +50,6 @@ class OfflineSync @Inject constructor(
     private val importantSource: ImportantPokemonSource,
     private val artworkStore: ArtworkStore,
 ) {
-
     suspend fun syncCatalogAndPrefetch(
         onProgress: suspend (done: Int, total: Int) -> Unit = { _, _ -> },
     ): SyncOutcome {
@@ -83,7 +79,7 @@ class OfflineSync @Inject constructor(
         val progress = ProgressCounter(ids.size, onProgress)
 
         val errors = ids.mapConcurrently(DOWNLOAD_CONCURRENCY) { id ->
-            val detailError = pokemonRepository.refreshDetail(id, ttl, force = false).errorOrNull
+            val detailError = pokemonRepository.refreshDetail(id, ttl, force = false).offlineBlocker
             val imageError = artworkStore.ensure(id)
             progress.step()
             listOfNotNull(detailError, imageError)
@@ -97,6 +93,13 @@ class OfflineSync @Inject constructor(
 
     private suspend fun ensureArtwork(ids: List<Int>): ArtworkReport =
         ArtworkReport.from(ids.distinct().mapConcurrently(DOWNLOAD_CONCURRENCY) { artworkStore.ensure(it) })
+
+    private val RefreshResult.offlineBlocker: Throwable?
+        get() = when (this) {
+            is RefreshResult.Failed -> error
+            is RefreshResult.Partial -> error.takeIf { it.isRetryable() }
+            RefreshResult.Updated, RefreshResult.UpToDate -> null
+        }
 
     companion object {
         const val DOWNLOAD_CONCURRENCY = 4

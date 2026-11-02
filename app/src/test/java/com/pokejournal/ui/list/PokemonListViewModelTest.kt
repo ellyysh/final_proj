@@ -39,7 +39,6 @@ class PokemonListViewModelTest {
 
     private fun createViewModel() = PokemonListViewModel(pokemon, journal, presets, settings, network)
 
-    /** Собирает состояния, пока не выполнится условие; возвращает всю последовательность. */
     private suspend fun ReceiveTurbine<PokemonListUiState>.collectUntil(
         predicate: (PokemonListUiState) -> Boolean,
     ): List<PokemonListUiState> {
@@ -72,7 +71,6 @@ class PokemonListViewModelTest {
             assertEquals(TestData.catalog.map { it.id }, states.last().ids())
             cancelAndIgnoreRemainingEvents()
         }
-        // Первая загрузка уважает TTL (force = false) и размер Pokédex из настроек профиля.
         assertEquals(listOf(CatalogCall(limit = 151, force = false)), pokemon.catalogCalls)
     }
 
@@ -100,7 +98,6 @@ class PokemonListViewModelTest {
             assertEquals(listOf("Loading", "Success"), afterRetry.contentKinds())
             cancelAndIgnoreRemainingEvents()
         }
-        // retry() действительно инициирует новую попытку и делает её принудительной.
         assertEquals(listOf(false, true), pokemon.catalogCalls.map { it.force })
     }
 
@@ -145,11 +142,9 @@ class PokemonListViewModelTest {
             vm.onEvent(PokemonListEvent.QueryChanged("bul"))
 
             val states = collectUntil { it.ids() == listOf(1) }
-            // Пока пользователь печатает, текст поля обновляется сразу, а список — нет.
             val intermediate = states.dropLast(1)
             assertTrue(intermediate.all { it.ids() == TestData.catalog.map { p -> p.id } })
             assertEquals("bul", states.last().query)
-            // Никаких промежуточных отфильтрованных списков для "b" и "bu".
             assertEquals(2, (states.map { it.ids() } + listOf(TestData.catalog.map { it.id })).distinct().size)
             expectNoEvents()
             cancelAndIgnoreRemainingEvents()
@@ -232,7 +227,6 @@ class PokemonListViewModelTest {
             collectUntil { it.content is ListContent.Success }
             vm.onEvent(PokemonListEvent.QueryChanged("pika"))
             vm.onEvent(PokemonListEvent.SavePreset("Электро"))
-            // One-time событие приходит отдельным потоком и не хранится в состоянии экрана.
             val message = vm.messages.first()
             assertEquals("Фильтр «Электро» сохранён", message)
             val state = collectUntil { it.presets.isNotEmpty() }.last()

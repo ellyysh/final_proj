@@ -155,8 +155,6 @@ fun ProfileScreen(
         }
     }
 
-    // Диалог закрывает ViewModel после успешного создания; при ошибке валидации
-    // он остаётся открытым с сообщением, введённое имя и аватар сохраняются.
     if (state.createDialog.visible) {
         CreateProfileDialog(
             error = state.createDialog.error,

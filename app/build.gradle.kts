@@ -52,7 +52,6 @@ android {
 
     testOptions {
         unitTests {
-            // Нужен Robolectric-тестам (Room in-memory, Compose UI, WorkManager).
             isIncludeAndroidResources = true
         }
     }

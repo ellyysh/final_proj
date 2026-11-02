@@ -2,7 +2,9 @@ package com.pokejournal.ui.detail
 
 import androidx.lifecycle.SavedStateHandle
 import com.pokejournal.data.repository.RefreshResult
+import com.pokejournal.domain.logic.HttpStatusException
 import com.pokejournal.domain.model.CatchStatus
+import com.pokejournal.domain.model.SpeciesState
 import com.pokejournal.testing.FakeCollectionRepository
 import com.pokejournal.testing.FakeHistoryRepository
 import com.pokejournal.testing.FakeJournalRepository
@@ -19,13 +21,14 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import java.io.IOException
 
 class PokemonDetailViewModelTest {
-
     @get:Rule
     val mainRule = MainDispatcherRule()
 
@@ -129,7 +132,7 @@ class PokemonDetailViewModelTest {
             vm.uiState.value.createCollectionDialog,
         )
         assertEquals(1, collections.collections.value.size)
-            .
+
         vm.onEvent(PokemonDetailEvent.CreateCollectionWithPokemon("Команда 2"))
         advanceUntilIdle()
         assertEquals(false, vm.uiState.value.createCollectionDialog.visible)
@@ -148,5 +151,46 @@ class PokemonDetailViewModelTest {
 
         assertEquals(1, collections.collections.value.size)
         assertEquals(CreateDialogState(), vm.uiState.value.createCollectionDialog)
+    }
+
+    @Test
+    fun `missing description shows card without retry banner`() = runTest {
+        pokemon.onRefreshDetail = { id, _ ->
+            pokemon.details.value = mapOf(
+                id to TestData.detail(id).copy(genus = null, flavorText = null, speciesState = SpeciesState.MISSING),
+            )
+            RefreshResult.Partial(HttpStatusException(404))
+        }
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        val content = state.content as DetailContent.Success
+        assertNull(state.refreshError)
+        assertEquals(SpeciesState.MISSING, content.pokemon.speciesState)
+        assertFalse(content.pokemon.isComplete)
+        assertEquals("Описание отсутствует в PokeAPI", speciesNotice(content.pokemon))
+    }
+
+    @Test
+    fun `temporarily failed description shows card with retry banner`() = runTest {
+        pokemon.onRefreshDetail = { id, _ ->
+            pokemon.details.value = mapOf(
+                id to TestData.detail(id).copy(genus = null, flavorText = null, speciesState = SpeciesState.PENDING),
+            )
+            RefreshResult.Partial(IOException())
+        }
+        val vm = createViewModel()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertTrue(state.content is DetailContent.Success)
+        assertEquals("Описание не загрузилось: Нет подключения к сети", state.refreshError)
+        assertEquals("Описание ещё не загружено", speciesNotice((state.content as DetailContent.Success).pokemon))
+    }
+
+    @Test
+    fun `loaded description needs no notice`() {
+        assertNull(speciesNotice(TestData.detail(1)))
     }
 }

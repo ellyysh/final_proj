@@ -84,10 +84,11 @@ interface CollectionDao {
     @Query(
         """
         SELECT c.id AS id, c.name AS name, c.description AS description, c.createdAt AS createdAt,
-               COUNT(i.pokemonId) AS itemCount, COUNT(d.pokemonId) AS offlineCount
+               COUNT(i.pokemonId) AS itemCount, COUNT(a.pokemonId) AS offlineCount
         FROM collections c
         LEFT JOIN collection_items i ON i.collectionId = c.id
-        LEFT JOIN pokemon_details d ON d.pokemonId = i.pokemonId
+        LEFT JOIN pokemon_details d ON d.pokemonId = i.pokemonId AND d.speciesState != 'PENDING'
+        LEFT JOIN offline_artwork a ON a.pokemonId = d.pokemonId
         WHERE c.profileId = :profileId
         GROUP BY c.id
         ORDER BY c.createdAt DESC, c.id DESC
@@ -98,10 +99,11 @@ interface CollectionDao {
     @Query(
         """
         SELECT c.id AS id, c.name AS name, c.description AS description, c.createdAt AS createdAt,
-               COUNT(i.pokemonId) AS itemCount, COUNT(d.pokemonId) AS offlineCount
+               COUNT(i.pokemonId) AS itemCount, COUNT(a.pokemonId) AS offlineCount
         FROM collections c
         LEFT JOIN collection_items i ON i.collectionId = c.id
-        LEFT JOIN pokemon_details d ON d.pokemonId = i.pokemonId
+        LEFT JOIN pokemon_details d ON d.pokemonId = i.pokemonId AND d.speciesState != 'PENDING'
+        LEFT JOIN offline_artwork a ON a.pokemonId = d.pokemonId
         WHERE c.id = :collectionId
         GROUP BY c.id
         """,
@@ -111,10 +113,12 @@ interface CollectionDao {
     @Query(
         """
         SELECT p.id AS pokemonId, p.name AS name, p.imageUrl AS imageUrl,
-               d.fetchedAt AS detailFetchedAt, i.addedAt AS addedAt
+               CASE WHEN a.pokemonId IS NULL THEN 0 ELSE 1 END AS availableOffline,
+               i.addedAt AS addedAt
         FROM collection_items i
         JOIN pokemon p ON p.id = i.pokemonId
-        LEFT JOIN pokemon_details d ON d.pokemonId = i.pokemonId
+        LEFT JOIN pokemon_details d ON d.pokemonId = i.pokemonId AND d.speciesState != 'PENDING'
+        LEFT JOIN offline_artwork a ON a.pokemonId = d.pokemonId
         WHERE i.collectionId = :collectionId
         ORDER BY i.addedAt DESC, p.id
         """,

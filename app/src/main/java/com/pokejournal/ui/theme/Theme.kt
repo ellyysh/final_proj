@@ -77,7 +77,6 @@ fun PokeJournalTheme(
     )
 }
 
-/** Фирменные цвета типов покемонов. */
 object TypeColors {
     private val colors = mapOf(
         "normal" to Color(0xFFA8A77A),

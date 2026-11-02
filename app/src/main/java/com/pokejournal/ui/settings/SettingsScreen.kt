@@ -128,7 +128,12 @@ private fun syncStatusText(status: WorkStatus): String = when (status) {
     is WorkStatus.Running ->
         if (status.total > 0) "Синхронизация… ${status.done}/${status.total}" else "Синхронизация…"
     is WorkStatus.Succeeded -> "Готово: обновлено ${status.updated}, ошибок ${status.failed}"
-    WorkStatus.Failed -> "Синхронизация не удалась, повторим позже"
+    is WorkStatus.Failed ->
+        if (status.failed > 0) {
+            "Синхронизация не завершена: не загружено ${status.failed}, повторим при следующем запуске"
+        } else {
+            "Синхронизация не удалась, повторим позже"
+        }
 }
 
 @Composable

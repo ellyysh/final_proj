@@ -32,7 +32,6 @@ sealed interface SettingsEvent {
     data class UpdateUser(val transform: (UserSettings) -> UserSettings) : SettingsEvent
     data class UpdateApp(val transform: (AppSettings) -> AppSettings) : SettingsEvent
 
-    /** Отдельное событие: смена лимита не только пишет настройку, но и чистит историю. */
     data class SetHistoryLimit(val limit: Int) : SettingsEvent
     data object SyncNow : SettingsEvent
 }
@@ -60,12 +59,9 @@ class SettingsViewModel @Inject constructor(
             is SettingsEvent.UpdateUser -> viewModelScope.launch {
                 settingsRepository.updateUserSettings(settingsRepository.activeProfileId.first(), event.transform)
             }
-            // Перепланирование WorkManager произойдёт реактивно в SyncInitializer.
             is SettingsEvent.UpdateApp -> viewModelScope.launch {
                 settingsRepository.updateAppSettings(event.transform)
             }
-            // Раньше лимит применялся только в record(): после 100 → 20 лишние 80 записей
-            // жили до следующего просмотра карточки. Теперь история обрезается сразу.
             is SettingsEvent.SetHistoryLimit -> viewModelScope.launch {
                 val profileId = settingsRepository.activeProfileId.first()
                 settingsRepository.updateUserSettings(profileId) { it.copy(historyLimit = event.limit) }

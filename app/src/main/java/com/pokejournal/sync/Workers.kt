@@ -17,8 +17,11 @@ object SyncRetryPolicy {
     fun forSync(outcome: SyncOutcome, attempt: Int): WorkDecision = when (outcome) {
         is SyncOutcome.Failure ->
             if (outcome.error.isRetryable() && attempt < MAX_ATTEMPTS) WorkDecision.RETRY else WorkDecision.FAILURE
-        is SyncOutcome.Success ->
-            if (outcome.hasRetryableFailures && attempt < MAX_ATTEMPTS) WorkDecision.RETRY else WorkDecision.SUCCESS
+        is SyncOutcome.Success -> when {
+            outcome.failedCount == 0 -> WorkDecision.SUCCESS
+            outcome.hasRetryableFailures && attempt < MAX_ATTEMPTS -> WorkDecision.RETRY
+            else -> WorkDecision.FAILURE
+        }
     }
 
     fun forCollection(report: OfflineDownloadReport, attempt: Int): WorkDecision = when {
@@ -34,7 +37,6 @@ class CatalogSyncWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val offlineSync: OfflineSync,
 ) : CoroutineWorker(context, params) {
-
     override suspend fun doWork(): Result {
         val outcome = offlineSync.syncCatalogAndPrefetch { done, total -> reportProgress(done, total) }
         val output = (outcome as? SyncOutcome.Success)?.let {
@@ -46,7 +48,7 @@ class CatalogSyncWorker @AssistedInject constructor(
         return when (SyncRetryPolicy.forSync(outcome, runAttemptCount)) {
             WorkDecision.SUCCESS -> if (output != null) Result.success(output) else Result.success()
             WorkDecision.RETRY -> Result.retry()
-            WorkDecision.FAILURE -> Result.failure()
+            WorkDecision.FAILURE -> if (output != null) Result.failure(output) else Result.failure()
         }
     }
 
@@ -65,7 +67,6 @@ class CollectionDownloadWorker @AssistedInject constructor(
     @Assisted params: WorkerParameters,
     private val offlineSync: OfflineSync,
 ) : CoroutineWorker(context, params) {
-
     override suspend fun doWork(): Result {
         val collectionId = inputData.getLong(WorkKeys.COLLECTION_ID, -1L)
         if (collectionId < 0) return Result.failure()

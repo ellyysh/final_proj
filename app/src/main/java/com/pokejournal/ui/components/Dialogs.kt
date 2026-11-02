@@ -16,7 +16,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-/** Диалог ввода одного/двух текстовых полей. Внутреннее состояние — только черновик ввода. */
 @Composable
 fun TextInputDialog(
     title: String,

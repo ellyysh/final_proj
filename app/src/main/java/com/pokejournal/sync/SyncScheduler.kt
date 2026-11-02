@@ -24,7 +24,7 @@ sealed interface WorkStatus {
     data object Queued : WorkStatus
     data class Running(val done: Int, val total: Int) : WorkStatus
     data class Succeeded(val updated: Int, val failed: Int) : WorkStatus
-    data object Failed : WorkStatus
+    data class Failed(val updated: Int, val failed: Int) : WorkStatus
 }
 
 interface SyncScheduler {
@@ -39,7 +39,6 @@ interface SyncScheduler {
 class WorkManagerSyncScheduler @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : SyncScheduler {
-
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
 
     override fun schedulePeriodicSync(settings: AppSettings) {
@@ -108,7 +107,10 @@ internal fun List<WorkInfo>.toStatus(): WorkStatus {
             updated = info.outputData.getInt(WorkKeys.UPDATED, 0),
             failed = info.outputData.getInt(WorkKeys.FAILED, 0),
         )
-        WorkInfo.State.FAILED -> WorkStatus.Failed
+        WorkInfo.State.FAILED -> WorkStatus.Failed(
+            updated = info.outputData.getInt(WorkKeys.UPDATED, 0),
+            failed = info.outputData.getInt(WorkKeys.FAILED, 0),
+        )
         WorkInfo.State.CANCELLED -> WorkStatus.Idle
     }
 }

@@ -56,7 +56,7 @@ class CollectionsViewModel @Inject constructor(
             CollectionsEvent.OpenCreateDialog -> dialog.value = CreateDialogState(visible = true)
             CollectionsEvent.DismissDialog -> dialog.value = CreateDialogState()
             is CollectionsEvent.Create -> {
-                if (dialog.value.submitting) return // защита от двойного нажатия
+                if (dialog.value.submitting) return
                 dialog.value = dialog.value.copy(submitting = true)
                 create(event)
             }
@@ -73,7 +73,7 @@ class CollectionsViewModel @Inject constructor(
             val result = collectionRepository.createCollection(profileId, event.name, event.description)
             dialog.update { current ->
                 when {
-                    !current.visible -> current // диалог успели закрыть — не открываем заново
+                    !current.visible -> current
                     result is CreateResult.Created -> CreateDialogState()
                     result is CreateResult.Rejected -> CreateDialogState(visible = true, error = result.error.message())
                     else -> current

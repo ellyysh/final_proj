@@ -1,13 +1,11 @@
 package com.pokejournal.data.local.entity
 
-import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.Relation
-
-/* ---------- Кэш контента из PokeAPI (общий для всех профилей) ---------- */
+import com.pokejournal.domain.model.SpeciesState
 
 @Entity(tableName = "pokemon")
 data class PokemonEntity(
@@ -27,7 +25,6 @@ data class PokemonTypeEntity(
     val slot: Int,
 )
 
-/** Детали хранятся отдельно, чтобы обновление каталога не затирало их. */
 @Entity(tableName = "pokemon_details")
 data class PokemonDetailEntity(
     @PrimaryKey val pokemonId: Int,
@@ -38,13 +35,13 @@ data class PokemonDetailEntity(
     val flavorText: String?,
     val abilities: String,
     val fetchedAt: Long,
-    /**
-     * false — основная карточка сохранена, но описание вида (species) не загрузилось
-     * из-за временной ошибки. Такая запись считается устаревшей и перезагружается
-     * при следующей возможности, не дожидаясь TTL. Добавлено в версии БД 2.
-     */
-    @ColumnInfo(defaultValue = "1")
-    val speciesLoaded: Boolean = true,
+    val speciesState: String = SpeciesState.LOADED.name,
+)
+
+@Entity(tableName = "offline_artwork")
+data class OfflineArtworkEntity(
+    @PrimaryKey val pokemonId: Int,
+    val savedAt: Long,
 )
 
 @Entity(tableName = "pokemon_stats", primaryKeys = ["pokemonId", "statName"])
@@ -55,7 +52,6 @@ data class PokemonStatEntity(
     val position: Int,
 )
 
-/** Метаданные актуальности кэша: когда и в каком объёме обновляли. */
 @Entity(tableName = "cache_meta")
 data class CacheMetaEntity(
     @PrimaryKey val key: String,

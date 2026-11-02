@@ -16,7 +16,6 @@ suspend fun <T, R> List<T>.mapConcurrently(limit: Int, transform: suspend (T) ->
     }
 }
 
-
 class ProgressCounter(
     private val total: Int,
     private val onProgress: suspend (done: Int, total: Int) -> Unit,

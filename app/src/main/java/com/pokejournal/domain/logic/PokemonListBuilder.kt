@@ -8,7 +8,6 @@ import com.pokejournal.domain.model.PokemonUserState
 import com.pokejournal.domain.model.SortOrder
 import com.pokejournal.domain.model.StatusFilter
 
-
 object PokemonListBuilder {
 
     fun build(

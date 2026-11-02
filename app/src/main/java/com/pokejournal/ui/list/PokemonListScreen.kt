@@ -89,7 +89,6 @@ fun PokemonListRoute(
     )
 }
 
-/** Stateless-экран: всё состояние приходит из ViewModel, наружу — только события. */
 @Composable
 fun PokemonListScreen(
     state: PokemonListUiState,

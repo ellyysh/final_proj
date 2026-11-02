@@ -11,6 +11,7 @@ import com.pokejournal.data.repository.JournalRepository
 import com.pokejournal.data.repository.PokemonRepository
 import com.pokejournal.data.repository.RefreshResult
 import com.pokejournal.data.settings.SettingsRepository
+import com.pokejournal.domain.logic.isRetryable
 import com.pokejournal.domain.logic.message
 import com.pokejournal.domain.logic.toUserMessage
 import com.pokejournal.domain.model.PokemonUserState
@@ -46,7 +47,6 @@ class PokemonDetailViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     networkMonitor: NetworkMonitor,
 ) : ViewModel() {
-
     val pokemonId: Int = checkNotNull(savedStateHandle.get<Int>(Routes.ARG_ID)) { "Не передан id покемона" }
 
     private val profileId = settingsRepository.activeProfileId
@@ -63,16 +63,18 @@ class PokemonDetailViewModel @Inject constructor(
                 val ttl = settingsRepository.appSettings.first().cacheTtlMillis
                 when (val result = pokemonRepository.refreshDetail(pokemonId, ttl, force)) {
                     is RefreshResult.Failed -> emit(RefreshState.Failed(result.error.toUserMessage()))
-                    // Карточка сохранена, но без описания — показываем её и сообщаем о недогрузке.
                     is RefreshResult.Partial ->
-                        emit(RefreshState.Failed("Описание не загрузилось: ${result.error.toUserMessage()}"))
+                        if (result.error.isRetryable()) {
+                            emit(RefreshState.Failed("Описание не загрузилось: ${result.error.toUserMessage()}"))
+                        } else {
+                            emit(RefreshState.Idle)
+                        }
                     RefreshResult.Updated, RefreshResult.UpToDate -> emit(RefreshState.Idle)
                 }
             }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, RefreshState.Running)
 
-    /** Личные данные профиля о покемоне: статус, заметка, коллекции. */
     private val userPart: Flow<UserPart> = profileId.flatMapLatest { pid ->
         combine(
             journalRepository.observeState(pid, pokemonId),
@@ -88,7 +90,6 @@ class PokemonDetailViewModel @Inject constructor(
         }
     }
 
-    /** Диалог «новая коллекция»: закрывается только после успешного создания. */
     private val createCollectionDialog = MutableStateFlow(CreateDialogState())
 
     val uiState: StateFlow<PokemonDetailUiState> = combine(
@@ -98,7 +99,7 @@ class PokemonDetailViewModel @Inject constructor(
         networkMonitor.isOnline,
         createCollectionDialog,
     ) { detail, refresh, user, online, dialog ->
-        val hasDetail = detail?.isComplete == true
+        val hasDetail = detail?.hasDetail == true
         val content = when {
             hasDetail -> DetailContent.Success(detail!!)
             refresh is RefreshState.Failed -> DetailContent.Error(refresh.message)
@@ -123,7 +124,6 @@ class PokemonDetailViewModel @Inject constructor(
     )
 
     init {
-        // Каждое открытие карточки попадает в историю текущего профиля.
         viewModelScope.launch {
             profileId.distinctUntilChanged().collect { pid ->
                 val limit = settingsRepository.userSettings(pid).first().historyLimit
@@ -158,7 +158,7 @@ class PokemonDetailViewModel @Inject constructor(
             PokemonDetailEvent.DismissCreateCollectionDialog ->
                 createCollectionDialog.value = CreateDialogState()
             is PokemonDetailEvent.CreateCollectionWithPokemon -> {
-                if (createCollectionDialog.value.submitting) return // защита от двойного нажатия
+                if (createCollectionDialog.value.submitting) return
                 createCollectionDialog.update { it.copy(submitting = true) }
                 withProfile { pid -> createCollectionWithPokemon(pid, event.name) }
             }
@@ -172,7 +172,6 @@ class PokemonDetailViewModel @Inject constructor(
                 createCollectionDialog.value = CreateDialogState()
                 messageChannel.send("Добавлено в «${name.trim()}»")
             }
-            // Диалог остаётся открытым с ошибкой — введённое название не теряется.
             is CreateResult.Rejected -> createCollectionDialog.update { current ->
                 if (current.visible) CreateDialogState(visible = true, error = result.error.message()) else current
             }

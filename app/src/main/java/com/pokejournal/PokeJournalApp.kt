@@ -30,7 +30,6 @@ class PokeJournalApp : Application(), Configuration.Provider, ImageLoaderFactory
         syncInitializer.start()
     }
 
-
     override fun newImageLoader(): ImageLoader = ImageLoader.Builder(this)
         .components { add(LocalArtworkMapper(artworkStore)) }
         .respectCacheHeaders(false)

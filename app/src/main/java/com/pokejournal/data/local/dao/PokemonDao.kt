@@ -7,6 +7,7 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
 import com.pokejournal.data.local.entity.CacheMetaEntity
+import com.pokejournal.data.local.entity.OfflineArtworkEntity
 import com.pokejournal.data.local.entity.PokemonDetailEntity
 import com.pokejournal.data.local.entity.PokemonEntity
 import com.pokejournal.data.local.entity.PokemonFull
@@ -17,7 +18,6 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PokemonDao {
-
     @Transaction
     @Query("SELECT * FROM pokemon ORDER BY id")
     fun observeCatalog(): Flow<List<PokemonWithTypes>>
@@ -64,4 +64,19 @@ interface CacheMetaDao {
 
     @Upsert
     suspend fun upsert(meta: CacheMetaEntity)
+}
+
+@Dao
+interface OfflineArtworkDao {
+    @Query("SELECT pokemonId FROM offline_artwork")
+    suspend fun ids(): List<Int>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(entity: OfflineArtworkEntity)
+
+    @Query("DELETE FROM offline_artwork WHERE pokemonId = :id")
+    suspend fun delete(id: Int)
+
+    @Query("DELETE FROM offline_artwork WHERE pokemonId IN (:ids)")
+    suspend fun deleteAll(ids: List<Int>)
 }

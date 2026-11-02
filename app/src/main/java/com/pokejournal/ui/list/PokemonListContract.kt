@@ -43,7 +43,6 @@ sealed interface PokemonListEvent {
     data class DeletePreset(val presetId: Long) : PokemonListEvent
 }
 
-/** Внутреннее состояние ручного/авто обновления каталога. */
 sealed interface RefreshState {
     data object Running : RefreshState
     data object Idle : RefreshState

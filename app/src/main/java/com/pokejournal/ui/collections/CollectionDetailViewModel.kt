@@ -32,10 +32,6 @@ sealed interface CollectionDetailEvent {
     data object DownloadOffline : CollectionDetailEvent
 }
 
-/**
- * Состав коллекции (Room) + статус фоновой загрузки (WorkManager) + сеть:
- * пользователь видит, сколько покемонов уже доступно офлайн, и прогресс докачки.
- */
 @HiltViewModel
 class CollectionDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,

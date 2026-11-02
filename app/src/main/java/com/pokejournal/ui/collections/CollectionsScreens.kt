@@ -56,8 +56,6 @@ import com.pokejournal.ui.components.TextInputDialog
 import com.pokejournal.ui.components.dexNumber
 import com.pokejournal.ui.components.displayName
 
-/* ------------------------------ Список коллекций ------------------------------ */
-
 @Composable
 fun CollectionsRoute(
     onOpenCollection: (Long) -> Unit,
@@ -158,10 +156,10 @@ private fun CollectionCard(
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
-            IconButton(onClick = onDownload, enabled = collection.itemCount > 0 && !collection.fullyOffline) {
+            IconButton(onClick = onDownload, enabled = collection.itemCount > 0) {
                 Icon(
                     if (collection.fullyOffline) Icons.Outlined.CloudDone else Icons.Outlined.CloudDownload,
-                    contentDescription = "Скачать для офлайна",
+                    contentDescription = downloadLabel(collection),
                 )
             }
             IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = "Удалить") }
@@ -169,7 +167,11 @@ private fun CollectionCard(
     }
 }
 
-/* ------------------------------ Содержимое коллекции ------------------------------ */
+internal fun downloadLabel(collection: CollectionSummary): String = when {
+    collection.fullyOffline -> "Обновить офлайн-копию"
+    collection.offlineCount > 0 -> "Докачать для офлайна"
+    else -> "Скачать для офлайна"
+}
 
 @Composable
 fun CollectionDetailRoute(
@@ -202,7 +204,13 @@ fun CollectionDetailScreen(
                     IconButton(
                         onClick = { onEvent(CollectionDetailEvent.DownloadOffline) },
                         enabled = state.members.isNotEmpty(),
-                    ) { Icon(Icons.Outlined.CloudDownload, "Скачать для офлайна") }
+                    ) {
+                        val collection = state.collection
+                        Icon(
+                            if (collection?.fullyOffline == true) Icons.Outlined.CloudDone else Icons.Outlined.CloudDownload,
+                            contentDescription = collection?.let(::downloadLabel) ?: "Скачать для офлайна",
+                        )
+                    }
                 },
             )
         },
@@ -268,7 +276,8 @@ private fun DownloadStatus(state: CollectionDetailUiState) {
             WorkStatus.Queued -> "Загрузка запланирована — начнётся, когда появится сеть"
             is WorkStatus.Running -> "Скачиваем для офлайна: ${download.done}/${download.total}"
             is WorkStatus.Succeeded -> "Офлайн: ${collection.offlineCount}/${collection.itemCount}"
-            WorkStatus.Failed -> "Часть карточек не скачалась. Попробуйте ещё раз"
+            is WorkStatus.Failed ->
+                "Не скачано ${download.failed} из ${collection.itemCount}. Повторите загрузку, чтобы докачать"
             WorkStatus.Idle -> "Офлайн: ${collection.offlineCount}/${collection.itemCount}"
         }
         Text(text, style = MaterialTheme.typography.bodySmall)

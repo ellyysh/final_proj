@@ -78,7 +78,6 @@ class FakePokemonRepository : PokemonRepository {
     val detailCalls = mutableListOf<Int>()
     val prefetchRequests = mutableListOf<List<Int>>()
 
-    /** Поведение обновления каталога можно подменить в тесте. */
     var onRefreshCatalog: suspend (CatalogCall) -> RefreshResult = {
         catalog.value = TestData.catalog
         RefreshResult.Updated
@@ -111,7 +110,7 @@ class FakePokemonRepository : PokemonRepository {
         onProgress: suspend (done: Int, total: Int) -> Unit,
     ): PrefetchReport {
         prefetchRequests += ids
-        val unique = ids.distinct() // как и настоящий репозиторий
+        val unique = ids.distinct()
         val results = unique.mapIndexed { index, id ->
             refreshDetail(id, ttlMillis, force = false).also { onProgress(index + 1, unique.size) }
         }
@@ -120,7 +119,6 @@ class FakePokemonRepository : PokemonRepository {
 }
 
 class FakeJournalRepository : JournalRepository {
-    /** profileId -> (pokemonId -> state) */
     val states = MutableStateFlow<Map<Long, Map<Int, PokemonUserState>>>(emptyMap())
     val notes = MutableStateFlow<Map<Pair<Long, Int>, String>>(emptyMap())
 
@@ -269,7 +267,6 @@ class FakeHistoryRepository : HistoryRepository {
     }
 }
 
-/** Хранилище картинок в памяти: [failing] — id, загрузка которых падает с заданной ошибкой. */
 class FakeArtworkStore : ArtworkStore {
     val stored = mutableSetOf<Int>()
     val ensureCalls = mutableListOf<Int>()

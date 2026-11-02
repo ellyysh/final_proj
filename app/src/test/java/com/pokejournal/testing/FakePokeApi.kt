@@ -80,7 +80,7 @@ class FakePokeApi(
         typeCallsCounter.incrementAndGet()
         val entries = pokemon.filter { name in it.second }.map { (id, types) ->
             TypePokemonDto(slot = types.indexOf(name) + 1, pokemon = NamedResourceDto(nameOf(id), url("pokemon", id)))
-        } + TypePokemonDto(1, NamedResourceDto("mega-form", url("pokemon", 10_001))) // альт-формы отсекаются
+        } + TypePokemonDto(1, NamedResourceDto("mega-form", url("pokemon", 10_001)))
         return TypeDto(name, entries)
     }
 
