@@ -1,0 +1,257 @@
+package com.pokejournal.integration
+
+import android.app.Application
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import com.pokejournal.data.local.AppDatabase
+import com.pokejournal.data.local.entity.OfflineArtworkEntity
+import com.pokejournal.data.local.entity.PokemonDetailEntity
+import com.pokejournal.data.local.entity.PokemonEntity
+import com.pokejournal.data.local.entity.ProfileEntity
+import com.pokejournal.data.repository.CreateResult
+import com.pokejournal.data.repository.DeleteProfileResult
+import com.pokejournal.data.repository.RoomCollectionRepository
+import com.pokejournal.data.repository.RoomHistoryRepository
+import com.pokejournal.data.repository.RoomImportantPokemonSource
+import com.pokejournal.data.repository.RoomJournalRepository
+import com.pokejournal.data.repository.RoomPresetRepository
+import com.pokejournal.data.repository.RoomProfileRepository
+import com.pokejournal.domain.logic.NameError
+import com.pokejournal.domain.model.CatchStatus
+import com.pokejournal.domain.model.ListFilter
+import com.pokejournal.domain.model.PokemonImages
+import com.pokejournal.domain.model.SpeciesState
+import com.pokejournal.domain.model.StatusFilter
+import com.pokejournal.testing.FakeSettingsRepository
+import com.pokejournal.testing.FakeTime
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class UserDataIntegrationTest {
+    private lateinit var db: AppDatabase
+    private val time = FakeTime()
+    private val settings = FakeSettingsRepository(activeId = 1L)
+
+    private lateinit var collections: RoomCollectionRepository
+    private lateinit var journal: RoomJournalRepository
+    private lateinit var history: RoomHistoryRepository
+    private lateinit var profiles: RoomProfileRepository
+    private lateinit var presets: RoomPresetRepository
+
+    @Before
+    fun setUp() = runTest {
+        db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        collections = RoomCollectionRepository(db, time)
+        journal = RoomJournalRepository(db, time)
+        history = RoomHistoryRepository(db.historyDao(), time)
+        profiles = RoomProfileRepository(db, settings, time)
+        presets = RoomPresetRepository(db, time)
+
+        db.profileDao().insert(ProfileEntity(id = 1, name = "Ash", avatar = "🔥", createdAt = 1))
+        db.profileDao().insert(ProfileEntity(id = 2, name = "Misty", avatar = "💧", createdAt = 2))
+        db.pokemonDao().upsertPokemon(
+            listOf(1 to "bulbasaur", 4 to "charmander", 7 to "squirtle").map { (id, name) ->
+                PokemonEntity(id, name, PokemonImages.artworkUrl(id))
+            },
+        )
+    }
+
+    @After
+    fun tearDown() {
+        db.close()
+    }
+
+    @Test
+    fun `adding the same pokemon twice does not create duplicate and offline count is tracked`() = runTest {
+        val id = (collections.createCollection(1L, "Starters", "first partners") as CreateResult.Created).id
+        collections.setMembership(id, 1, true)
+        time.advance(10)
+        collections.setMembership(id, 1, true)
+        collections.setMembership(id, 4, true)
+        db.pokemonDao().upsertDetail(PokemonDetailEntity(4, 6, 85, 62, null, null, "", fetchedAt = 1))
+        assertEquals(0, collections.observeCollection(id).first()!!.offlineCount)
+        db.offlineArtworkDao().insert(OfflineArtworkEntity(4, savedAt = 1))
+
+        val summary = collections.observeCollection(id).first()!!
+        assertEquals(2, summary.itemCount)
+        assertEquals(1, summary.offlineCount)
+        assertEquals(listOf(4, 1), collections.observeMembers(id).first().map { it.pokemonId })
+        assertEquals(setOf(id), collections.observeCollectionIdsFor(1L, 1).first())
+    }
+
+    @Test
+    fun `offline count requires card with final description and saved image`() = runTest {
+        val id = (collections.createCollection(1L, "Trip", "") as CreateResult.Created).id
+        listOf(1, 4, 7).forEach { collections.setMembership(id, it, true) }
+        listOf(1, 4, 7).forEach { db.offlineArtworkDao().insert(OfflineArtworkEntity(it, savedAt = 1)) }
+        db.pokemonDao().upsertDetail(PokemonDetailEntity(1, 7, 69, 64, "Seed", "Text", "", fetchedAt = 1))
+        db.pokemonDao().upsertDetail(
+            PokemonDetailEntity(4, 6, 85, 62, null, null, "", fetchedAt = 1, speciesState = SpeciesState.PENDING.name),
+        )
+        db.pokemonDao().upsertDetail(
+            PokemonDetailEntity(7, 5, 90, 63, null, null, "", fetchedAt = 1, speciesState = SpeciesState.MISSING.name),
+        )
+
+        val summary = collections.observeCollection(id).first()!!
+        assertEquals(2, summary.offlineCount)
+        assertFalse(summary.fullyOffline)
+        val members = collections.observeMembers(id).first().associate { it.pokemonId to it.availableOffline }
+        assertEquals(mapOf(1 to true, 4 to false, 7 to true), members)
+
+        db.offlineArtworkDao().delete(1)
+        assertEquals(1, collections.observeCollection(id).first()!!.offlineCount)
+        assertEquals(1, collections.observeCollections(1L).first().single().offlineCount)
+    }
+
+    @Test
+    fun `collection names are unique per profile only`() = runTest {
+        collections.createCollection(1L, "Favourites", "")
+        assertEquals(
+            CreateResult.Rejected(NameError.DUPLICATE),
+            collections.createCollection(1L, "favourites", ""),
+        )
+        assertTrue(collections.createCollection(2L, "Favourites", "") is CreateResult.Created)
+        assertEquals(1, collections.observeCollections(1L).first().size)
+    }
+
+    @Test
+    fun `journal state is separated per profile and default state is not stored`() = runTest {
+        journal.setStatus(1L, 7, CatchStatus.CAUGHT)
+        journal.setPinned(2L, 7, true)
+
+        assertEquals(CatchStatus.CAUGHT, journal.observeState(1L, 7).first().status)
+        assertEquals(false, journal.observeState(1L, 7).first().pinned)
+        assertEquals(CatchStatus.NONE, journal.observeState(2L, 7).first().status)
+
+        journal.setStatus(1L, 7, CatchStatus.NONE)
+        assertTrue(journal.observeStates(1L).first().isEmpty())
+
+        journal.setHidden(2L, 7, true)
+        val hidden = journal.observeState(2L, 7).first()
+        assertTrue(hidden.hidden && !hidden.pinned)
+    }
+
+    @Test
+    fun `history keeps unique entries, newest first, trimmed to limit`() = runTest {
+        listOf(1, 4, 7).forEach {
+            history.record(1L, it, limit = 2)
+            time.advance(1_000)
+        }
+        assertEquals(listOf(7, 4), history.observeHistory(1L).first().map { it.pokemonId })
+
+        history.record(1L, 4, limit = 2)
+        assertEquals(listOf(4, 7), history.observeHistory(1L).first().map { it.pokemonId })
+        assertTrue(history.observeHistory(2L).first().isEmpty())
+    }
+
+    @Test
+    fun `deleting a profile cascades its data and switches active profile`() = runTest {
+        settings.setActiveProfile(2L)
+        val collectionId = (collections.createCollection(2L, "Water", "") as CreateResult.Created).id
+        collections.setMembership(collectionId, 7, true)
+        journal.saveNote(2L, 7, "Starmie next")
+        history.record(2L, 7, 10)
+        presets.savePreset(2L, "Water only", "", ListFilter(type = "water", status = StatusFilter.ALL))
+        settings.updateUserSettings(2L) { it.copy(historyLimit = 100) }
+
+        assertEquals(DeleteProfileResult.Deleted, profiles.deleteProfile(2L))
+
+        assertEquals(1L, settings.active.value)
+        assertTrue(collections.observeCollections(2L).first().isEmpty())
+        assertTrue(journal.observeNotes(2L).first().isEmpty())
+        assertTrue(history.observeHistory(2L).first().isEmpty())
+        assertTrue(presets.observePresets(2L).first().isEmpty())
+        assertTrue(settings.users.value[2L] == null)
+        assertEquals(DeleteProfileResult.LastProfile, profiles.deleteProfile(1L))
+    }
+
+    @Test
+    fun `important ids for offline prefetch come from all personal sources`() = runTest {
+        val collectionId = (collections.createCollection(1L, "Team", "") as CreateResult.Created).id
+        collections.setMembership(collectionId, 1, true)
+        journal.setStatus(2L, 4, CatchStatus.WANTED)
+        history.record(1L, 7, 10)
+        journal.setHidden(1L, 25, true)
+
+        val ids = RoomImportantPokemonSource(db.syncDao()).importantIds().sorted()
+
+        assertEquals(listOf(1, 4, 7), ids)
+    }
+
+    @Test
+    fun `concurrent journal updates of the same pokemon are not lost`() = runTest {
+        val ids = 1..60
+          withContext(Dispatchers.Default) {
+            ids.flatMap { id ->
+                listOf(
+                    async { journal.setStatus(1L, id, CatchStatus.CAUGHT) },
+                    async { journal.setPinned(1L, id, true) },
+                )
+            }.awaitAll()
+        }
+
+        val states = journal.observeStates(1L).first()
+        assertEquals(ids.count(), states.size)
+        assertTrue(states.values.all { it.status == CatchStatus.CAUGHT && it.pinned })
+    }
+
+    @Test
+    fun `concurrent hide and status change keep both changes`() = runTest {
+        journal.setPinned(1L, 7, true)
+
+        withContext(Dispatchers.Default) {
+            listOf(
+                async { journal.setHidden(1L, 7, true) },
+                async { journal.setStatus(1L, 7, CatchStatus.SEEN) },
+            ).awaitAll()
+        }
+
+        val state = journal.observeState(1L, 7).first()
+        assertTrue(state.hidden)
+        assertEquals(CatchStatus.SEEN, state.status)
+        assertTrue(!state.pinned)
+    }
+
+    @Test
+    fun `double submit of the same collection name creates exactly one collection`() = runTest {
+        val results = withContext(Dispatchers.Default) {
+            (1..8).map { async { collections.createCollection(1L, "Team", "") } }.awaitAll()
+        }
+
+        assertEquals(1, results.count { it is CreateResult.Created })
+        assertEquals(7, results.count { it == CreateResult.Rejected(NameError.DUPLICATE) })
+        assertEquals(1, collections.observeCollections(1L).first().size)
+    }
+
+    @Test
+    fun `lowering history limit trims existing entries immediately`() = runTest {
+        (1..30).forEach {
+            history.record(1L, it, limit = 100)
+            time.advance(1_000)
+        }
+        history.record(2L, 1, limit = 100)
+
+        history.applyLimit(1L, 20)
+
+        val left = history.observeHistory(1L).first().map { it.pokemonId }
+        assertEquals((30 downTo 11).toList(), left)
+        assertEquals(1, history.observeHistory(2L).first().size)
+    }
+}
